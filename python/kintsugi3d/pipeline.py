@@ -39,7 +39,7 @@ class Kintsugi3DPipeline:
 
         with Kintsugi3DPipeline() as pipeline:
             pipeline.load_from_vset("project.vset", "project_supporting_files")
-            pipeline.run_specular_fit(2048, 2048)
+            pipeline.run_specular_fit(2048)
             pipeline.export_gltf("output")
 
     Creating a pipeline (open()) creates a real, invisible GLFW/OpenGL context, so the
@@ -101,10 +101,12 @@ class Kintsugi3DPipeline:
         method has completed successfully."""
         return self._java.getResources()
 
-    def run_specular_fit(self, width, height, *, basis_count=None, output_directory=None):
+    def run_specular_fit(self, texture_size, *, basis_count=None, output_directory=None):
         """Runs the specular fit / decomposition process against the currently loaded
-        project. width/height are the output texture resolution."""
-        settings = new_specular_fit_settings(width, height)
+        project. texture_size is the output texture resolution (always square - same
+        convention as the GUI's "textureSize" project setting and every texture atlas
+        AliceVision/most other tools produce)."""
+        settings = new_specular_fit_settings(texture_size)
 
         if basis_count is not None:
             settings.getSpecularBasisSettings().setBasisComplexity(basis_count)
@@ -238,11 +240,11 @@ def build_view_set(project_root, cameras, *, supporting_files_directory=None,
     return builder.finish()
 
 
-def new_specular_fit_settings(width, height):
-    """Returns a real Java SpecularFitSettings object for the given output texture
-    resolution, for callers who need to configure it beyond run_specular_fit()'s
-    basis_count/output_directory convenience parameters."""
-    return jpype.JClass("kintsugi3d.builder.fit.settings.SpecularFitSettings")(width, height)
+def new_specular_fit_settings(texture_size):
+    """Returns a real Java SpecularFitSettings object for the given (square) output
+    texture resolution, for callers who need to configure it beyond
+    run_specular_fit()'s basis_count/output_directory convenience parameters."""
+    return jpype.JClass("kintsugi3d.builder.fit.settings.SpecularFitSettings")(texture_size, texture_size)
 
 
 def new_export_settings():

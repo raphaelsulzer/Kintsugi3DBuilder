@@ -53,7 +53,7 @@ with Kintsugi3DPipeline() as pipeline:
     # Or: pipeline.load_from_vset("project.vset", "project_supporting_files")
     # Or: pipeline.load_from_metashape("project.psx")
 
-    pipeline.run_specular_fit(2048, 2048, basis_count=8)
+    pipeline.run_specular_fit(2048, basis_count=8)
 
     pipeline.export_gltf("output")
     pipeline.export_textures("output/textures")
