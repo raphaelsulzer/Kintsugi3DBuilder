@@ -95,6 +95,20 @@ For MacOS builds, a MacOS Java (x64) runtime should be located in the `jre-macos
 (top level within that folder should contain _CodeSignature, Home, info.plist, and MacOS).
 [Note: There is a known issue with OpenJDK 11.0.22+ on MacOS; for the time being, use [11.0.21](https://www.azul.com/core-post-download/?endpoint=zulu&uuid=bde60a67-2538-431c-8004-a576898f1fb3).]
 
+### Devcontainer
+This repository includes a VS Code devcontainer in `.devcontainer/` for Ubuntu 24.04. The container installs Java 11, Maven, and the Linux OpenGL/X11 libraries required to run Kintsugi 3D Builder inside the container.
+
+To use it:
+- Reopen the repository in the devcontainer.
+- Allow the container to finish the post-create step, which primes Maven dependencies for the Linux profile.
+- Build the Linux artifact with `bash scripts/build-kintsugi3d.sh`.
+- Run the application with `bash scripts/run-kintsugi3d.sh`.
+
+Notes:
+- The Linux container builds the existing shaded JAR using `mvn clean package -Plwjgl-natives-linux-amd64`.
+- The repository's Windows `.exe` and NSIS installer flow is unchanged and is not part of the default Linux devcontainer workflow.
+- GUI execution from the container relies on X11 forwarding. On Linux hosts you may need to allow local container access with `xhost +local:` before launching the container.
+
 ### Install
 There are additional requirements for building the installer executable using the `install` maven lifecycle:
 - NSIS must be installed on the system. [Download Nullsoft Scriptable Install System](https://nsis.sourceforge.io/Download)

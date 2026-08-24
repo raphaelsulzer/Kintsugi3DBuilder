@@ -1,0 +1,37 @@
+{
+  "name": "Kintsugi3DBuilder (Ubuntu 24.04)",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "remoteUser": "root",
+  "workspaceFolder": "${localWorkspaceFolder}",
+  "workspaceMount": "source=${localWorkspaceFolder},target=${localWorkspaceFolder},type=bind,consistency=cached",
+  "containerEnv": {
+    "DISPLAY": "${localEnv:DISPLAY}"
+  },
+  "mounts": [
+    "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind",
+    "source=${localEnv:HOME},target=${localEnv:HOME},type=bind",
+    "source=${localEnv:HOME}/.ssh,target=/root/.ssh,type=bind,readonly"
+  ],
+  "postStartCommand": "git config --global --add safe.directory ${containerWorkspaceFolder}",
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.defaultProfile.linux": "bash",
+        "maven.terminal.useJavaHome": true
+      },
+      "extensions": [
+        "vscjava.vscode-java-pack",
+        "vscjava.vscode-maven",
+        "redhat.java"
+      ]
+    }
+  },
+  "runArgs": [
+    "--network=host",
+    "--init"
+  ]
+}

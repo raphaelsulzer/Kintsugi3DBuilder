@@ -109,6 +109,142 @@ public class ProjectRenderingEngine<ContextType extends Context<ContextType>>
         this.sceneViewportModel = createSceneViewportModel(this.sceneModel);
     }
 
+    /**
+     * Builds and initializes a RenderableInstance without any JavaFX or GraphicsRequestManager involvement,
+     * for use by headless (non-GUI) entry points. Reuses the same resource-build and shader-init logic as
+     * the standard GUI-driven construction path; initialize() dereferences the scene model's object/camera/
+     * lighting/settings models while building interactive-rendering components (light calibration, view
+     * selection, etc.), so this populates those with inert headless defaults first, mirroring what
+     * ProjectInstanceManager.initializeSceneModel() does with live GUI models.
+     */
+    public static <ContextType extends Context<ContextType>> RenderableInstance<ContextType> createHeadless(
+        String id, ContextType context, Builder<ContextType> resourceBuilder) throws InitializationException
+    {
+        ProjectRenderingEngine<ContextType> engine = new ProjectRenderingEngine<>(id, context, resourceBuilder);
+
+        SceneModel sceneModel = engine.getSceneModel();
+        sceneModel.setObjectModel(() -> Matrix4.IDENTITY);
+        sceneModel.setCameraModel(() -> Matrix4.IDENTITY);
+        sceneModel.setLightingModel(new NullLightingEnvironmentModel());
+        sceneModel.setSettingsModel(new kintsugi3d.builder.state.settings.SimpleGeneralSettingsModel());
+        sceneModel.setCameraViewListModel(new NullCameraViewListModel());
+
+        engine.initialize();
+        return engine;
+    }
+
+    /**
+     * Inert lighting environment with no active lights, used as the headless default scene lighting model.
+     * Specular fit and export operate on the view set's actual captured lighting, not this interactive
+     * preview-lighting model, so headless callers have no need to configure it.
+     */
+    private static final class NullLightingEnvironmentModel implements kintsugi3d.builder.state.scene.ReadonlyLightingEnvironmentModel
+    {
+        @Override
+        public kintsugi3d.builder.state.scene.ReadonlyLightWidgetModel getLightWidgetModel(int index)
+        {
+            return new kintsugi3d.builder.state.scene.ReadonlyLightWidgetModel()
+            {
+                @Override
+                public boolean isAzimuthWidgetVisible() { return false; }
+                @Override
+                public boolean isAzimuthWidgetSelected() { return false; }
+                @Override
+                public boolean isInclinationWidgetVisible() { return false; }
+                @Override
+                public boolean isInclinationWidgetSelected() { return false; }
+                @Override
+                public boolean isDistanceWidgetVisible() { return false; }
+                @Override
+                public boolean isDistanceWidgetSelected() { return false; }
+                @Override
+                public boolean isCenterWidgetVisible() { return false; }
+                @Override
+                public boolean isCenterWidgetSelected() { return false; }
+            };
+        }
+
+        @Override
+        public int getLightCount() { return 0; }
+        @Override
+        public int getMaxLightCount() { return 4; }
+        @Override
+        public boolean isLightVisualizationEnabled(int index) { return false; }
+        @Override
+        public boolean isLightWidgetEnabled(int index) { return false; }
+        @Override
+        public boolean areLightWidgetsEthereal() { return false; }
+        @Override
+        public float getAmbientLightIntensity() { return 1.0f; }
+        @Override
+        public Vector3 getAmbientLightColor() { return new Vector3(1.0f, 1.0f, 1.0f); }
+        @Override
+        public boolean isEnvironmentMappingEnabled() { return false; }
+        @Override
+        public Matrix4 getEnvironmentMapMatrix() { return Matrix4.IDENTITY; }
+        @Override
+        public float getEnvironmentMapFilteringBias() { return 0.0f; }
+        @Override
+        public kintsugi3d.builder.state.scene.ReadonlyLightPrototypeModel getLightPrototype(int i)
+        {
+            return new kintsugi3d.builder.state.scene.ReadonlyLightPrototypeModel()
+            {
+                @Override
+                public Vector3 getColor() { return Vector3.ZERO; }
+                @Override
+                public float getSpotSize() { return 0.0f; }
+                @Override
+                public float getSpotTaper() { return 0.0f; }
+            };
+        }
+        @Override
+        public Matrix4 getLightMatrix(int i) { return Matrix4.IDENTITY; }
+        @Override
+        public Vector3 getLightCenter(int i) { return Vector3.ZERO; }
+        @Override
+        public float getBackgroundIntensity() { return 1.0f; }
+        @Override
+        public Vector3 getBackgroundColor() { return Vector3.ZERO; }
+        @Override
+        public kintsugi3d.builder.state.scene.BackgroundMode getBackgroundMode() { return kintsugi3d.builder.state.scene.BackgroundMode.NONE; }
+        @Override
+        public Vector3 getGroundPlaneColor() { return Vector3.ZERO; }
+        @Override
+        public boolean isGroundPlaneEnabled() { return false; }
+        @Override
+        public float getGroundPlaneHeight() { return 0.0f; }
+        @Override
+        public float getGroundPlaneSize() { return 0.0f; }
+    }
+
+    /**
+     * Inert camera-view-list model used as the headless default; there is no UI photo list to keep in sync with.
+     */
+    private static final class NullCameraViewListModel implements kintsugi3d.builder.state.CameraViewListModel
+    {
+        private java.util.List<String> cameraViewList = java.util.Collections.emptyList();
+        private int selectedIndex = -1;
+        private boolean snapEnabled = false;
+
+        @Override
+        public String getSelectedCameraView()
+        {
+            return selectedIndex >= 0 && selectedIndex < cameraViewList.size() ? cameraViewList.get(selectedIndex) : null;
+        }
+        @Override
+        public int getSelectedCameraViewIndex() { return selectedIndex; }
+        @Override
+        public void setSelectedCameraViewIndex(int cameraViewIndex) { this.selectedIndex = cameraViewIndex; }
+        @Override
+        public java.util.List<String> getCameraViewList() { return cameraViewList; }
+        @Override
+        public void setCameraViewList(java.util.List<String> cameraViewList) { this.cameraViewList = cameraViewList; }
+        @Override
+        public boolean isCameraViewSnapEnabled() { return snapEnabled; }
+        @Override
+        public void setCameraViewSnapEnabled(boolean cameraViewSnapEnabled) { this.snapEnabled = cameraViewSnapEnabled; }
+    }
+
     private static SceneViewportModel createSceneViewportModel(SceneModel sceneModel)
     {
         SceneViewportModel sceneViewportModel = new SceneViewportModel(sceneModel);
