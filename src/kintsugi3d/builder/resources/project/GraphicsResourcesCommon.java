@@ -339,12 +339,12 @@ final class GraphicsResourcesCommon<ContextType extends Context<ContextType>>
             }
         }
 
-        LOG.info("View weights:");
+        LOG.trace("View weights:");
 
         for (int k = 0; k < viewSet.getCombinedCameraPoseCount(); k++)
         {
             cameraWeights[k] = (float)totals[k] / (float)actualSampleCount;
-            LOG.info("{}\t{}", viewSet.getImageFileName(k), cameraWeights[k]);
+            LOG.trace("{}\t{}", viewSet.getImageFileName(k), cameraWeights[k]);
         }
 
         return cameraWeights;

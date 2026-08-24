@@ -157,7 +157,7 @@ public final class SpecularFitOptimizable<ContextType extends Context<ContextTyp
     private void optimize(Runnable iteration, double convergenceTolerance, ProgressMonitor monitor)
         throws UserCancellationException
     {
-        //monitor.setMaxProgress(1.0 / convergenceTolerance);
+        monitor.setMaxProgress(1.0 / convergenceTolerance);
 
         // Track how the error improves over iterations of the whole algorithm.
         double deltaError;
@@ -172,7 +172,7 @@ public final class SpecularFitOptimizable<ContextType extends Context<ContextTyp
 
             deltaError = previousIterationError - errorCalculator.getReport().getError();
             minDeltaError = Math.min(minDeltaError, deltaError);
-            //monitor.setProgress(1.0 / Math.max(convergenceTolerance, minDeltaError), MessageFormat.format("Delta error: {0}", minDeltaError));
+            monitor.setProgress(1.0 / Math.max(convergenceTolerance, minDeltaError), String.format("Delta error: %s", minDeltaError));
         }
         while ((basisSettings.getBasisCount() > 1 || normalOptimization.isNormalRefinementEnabled()) &&
             // Iteration not necessary if basisCount is 1 and normal refinement is off.
@@ -294,7 +294,7 @@ public final class SpecularFitOptimizable<ContextType extends Context<ContextTyp
 
     private void calculateError()
     {
-        LOG.debug("Calculating error...");
+        LOG.trace("Calculating error...");
 
         // Calculate the error in preparation for normal estimation.
         errorCalculator.update();
@@ -332,7 +332,7 @@ public final class SpecularFitOptimizable<ContextType extends Context<ContextTyp
         // Basis functions will have changed.
         getBasisResources().setBasis(specularDecomposition.getMaterialBasis());
 
-        LOG.debug("Calculating error...");
+        LOG.trace("Calculating error...");
         errorCalculator.update();
         logError(errorCalculator.getReport());
     }
@@ -352,7 +352,7 @@ public final class SpecularFitOptimizable<ContextType extends Context<ContextTyp
         {
             if (blockCount > 1)
             {
-                LOG.info("Starting block {}...", i);
+                LOG.trace("Starting block {}...", i);
             }
 
             weightOptimization.execute(
@@ -372,7 +372,7 @@ public final class SpecularFitOptimizable<ContextType extends Context<ContextTyp
 
     private void normalOptimizationIteration(double convergenceTolerance, File debugDirectory)
     {
-        LOG.info("Optimizing normals...");
+        LOG.trace("Optimizing normals...");
 
         normalOptimization.execute(normalMap ->
             {
@@ -399,7 +399,7 @@ public final class SpecularFitOptimizable<ContextType extends Context<ContextTyp
 
     private static void logError(ReadonlyErrorReport report)
     {
-        LOG.debug("Error: {} (Previous error: {})", report.getError(), report.getPreviousError());
+        LOG.trace("Error: {} (Previous error: {})", report.getError(), report.getPreviousError());
     }
 
     @Override

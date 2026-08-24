@@ -844,11 +844,11 @@ public final class GraphicsResourcesImageSpace<ContextType extends Context<Conte
             if (previewImages.needsUndistortion())
             {
                 // Distortion exists; undistort
-                LOG.info("Undistorting image {}/{}", poseIndex, getViewSet().getCombinedCameraPoseCount());
+                LOG.trace("Undistorting image {}/{}", poseIndex, getViewSet().getCombinedCameraPoseCount());
             }
             else if (getViewSet().getPreviewWidth() > 0 && getViewSet().getPreviewHeight() > 0)
             {
-                LOG.info("Resizing image {}/{} : No distortion parameters", poseIndex, getViewSet().getCombinedCameraPoseCount());
+                LOG.trace("Resizing image {}/{} : No distortion parameters", poseIndex, getViewSet().getCombinedCameraPoseCount());
             }
             else
             {

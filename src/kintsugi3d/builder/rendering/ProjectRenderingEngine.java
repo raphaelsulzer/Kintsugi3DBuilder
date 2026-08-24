@@ -120,6 +120,12 @@ public class ProjectRenderingEngine<ContextType extends Context<ContextType>>
     public static <ContextType extends Context<ContextType>> RenderableInstance<ContextType> createHeadless(
         String id, ContextType context, Builder<ContextType> resourceBuilder) throws InitializationException
     {
+        return createHeadless(id, context, resourceBuilder, null);
+    }
+
+    public static <ContextType extends Context<ContextType>> RenderableInstance<ContextType> createHeadless(
+        String id, ContextType context, Builder<ContextType> resourceBuilder, ProgressMonitor progressMonitor) throws InitializationException
+    {
         ProjectRenderingEngine<ContextType> engine = new ProjectRenderingEngine<>(id, context, resourceBuilder);
 
         SceneModel sceneModel = engine.getSceneModel();
@@ -128,6 +134,11 @@ public class ProjectRenderingEngine<ContextType extends Context<ContextType>>
         sceneModel.setLightingModel(new NullLightingEnvironmentModel());
         sceneModel.setSettingsModel(new kintsugi3d.builder.state.settings.SimpleGeneralSettingsModel());
         sceneModel.setCameraViewListModel(new NullCameraViewListModel());
+
+        if (progressMonitor != null)
+        {
+            engine.setProgressMonitor(progressMonitor);
+        }
 
         engine.initialize();
         return engine;

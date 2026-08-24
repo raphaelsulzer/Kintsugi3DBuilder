@@ -124,6 +124,13 @@ class Kintsugi3DPipeline:
     def export_textures(self, material_directory):
         self._java.exportTextures(_jfile(material_directory))
 
+    def save_vset(self, file):
+        """Saves the currently loaded project as a standalone .vset project file, so it can be
+        reopened later in the Kintsugi 3D Builder GUI (File > Open Project). The file's parent
+        directory becomes the view set's root directory - referenced paths are written relative
+        to it, so keep it inside (or alongside) the rest of the project's output."""
+        self._java.saveVSET(_jfile(file))
+
 
 def view_set_load_options(camera_file, *, project_root=None, supporting_files_directory=None,
                            full_res_image_directory=None, full_res_images_need_undistort=False,
@@ -229,7 +236,11 @@ def build_view_set(project_root, cameras, *, supporting_files_directory=None,
             .setCurrentImageFile(jpype.java.io.File(os.fspath(camera["image_file"])))
             .commitCurrentCameraPose())
 
-    builder.addLight(Vector3.ZERO, Vector3.ZERO)
+    # Light co-located with the camera (zero position), unit (not zero) intensity - treats every photo as
+    # lit by a normalized, uncalibrated flash, the same convention ViewSetReaderFromAgisoftXML uses for
+    # sources with no calibrated light data. A zero intensity here divides every texel's reflectance by
+    # zero in average.frag (rgb / attenuatedIntensity), poisoning it to Infinity/NaN.
+    builder.addLight(Vector3.ZERO, Vector3(1.0))
 
     if full_res_image_directory is not None:
         builder.setFullResImageDirectory(_jfile(full_res_image_directory))

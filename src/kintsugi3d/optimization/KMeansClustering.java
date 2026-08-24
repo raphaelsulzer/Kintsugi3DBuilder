@@ -150,7 +150,10 @@ public class KMeansClustering
                     {
                         if (colorMap.getAlpha(p) > 0.0)
                         {
-                            int bMin = -1;
+                            // Falls back to cluster 0 (rather than an invalid index) if every distance is
+                            // NaN - comparisons against NaN are always false, so the loop below would
+                            // otherwise leave this at its initial value.
+                            int bMin = 0;
 
                             double minDistance = Double.MAX_VALUE;
 
@@ -192,7 +195,10 @@ public class KMeansClustering
 
             if (colorMap.get(p).w > 0.0)
             {
-                int bMin = -1;
+                // Falls back to cluster 0 (rather than an invalid index) if every distance is NaN -
+                // comparisons against NaN are always false, so the loop below would otherwise leave this
+                // at its initial value.
+                int bMin = 0;
 
                 double minDistance = Double.MAX_VALUE;
 

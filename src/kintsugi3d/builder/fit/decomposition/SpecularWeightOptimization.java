@@ -49,7 +49,7 @@ public class SpecularWeightOptimization
 
     public void execute(GraphicsStream<ReflectanceData> viewStream, SpecularDecomposition solution, int pStart)
     {
-        LOG.info("Building weight fitting matrices...");
+        LOG.trace("Building weight fitting matrices...");
 
         // Setup all the matrices for fitting weights (one per texel)
         base.buildMatrices(viewStream, new SpecularWeightModel(solution),
@@ -61,7 +61,7 @@ public class SpecularWeightOptimization
         // TODO expose the damping factor as a setting.
 //        base.dampenWithPreviousSolution(1.0, p -> b -> solution.getWeights(pStart + p).get(b));
 
-        LOG.info("Finished building matrices; solving now...");
+        LOG.trace("Finished building matrices; solving now...");
 
         // Optimize the weights and store the result in the SpecularDecomposition.
         if (pStart + weightBlockSize > textureResolution.width * textureResolution.height)
@@ -88,7 +88,7 @@ public class SpecularWeightOptimization
                 });
         }
 
-        LOG.info("DONE!");
+        LOG.trace("DONE!");
     }
 
     public void execute(GraphicsStream<ReflectanceData> viewStream, SpecularDecomposition solution)

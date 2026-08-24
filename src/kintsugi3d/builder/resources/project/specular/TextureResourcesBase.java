@@ -135,7 +135,10 @@ public abstract class TextureResourcesBase<ContextType extends Context<ContextTy
             getBasisResources().getBasis().save(outputDirectory,
                 filenameOverride != null ? filenameOverride : TextureResources.getBasisFunctionsFilename());
 
-            // Save basis image visualization for cards
+            // Save basis image visualization for cards - a GUI-only convenience (sidebar material
+            // cards), not needed by headless callers. Global.state() requires a running JavaFX
+            // Application Thread, which headless mode never starts, so skip quietly rather than
+            // letting that failure abort an otherwise-successful fit/export.
             try (BasisImageCreator<ContextType> basisImageCreator =
                      new BasisImageCreator<>(getContext(), getBasisResources().getBasisResolution()))
             {
@@ -145,6 +148,12 @@ public abstract class TextureResourcesBase<ContextType extends Context<ContextTy
             catch (IOException e)
             {
                 ExceptionHandling.error("Error saving basis image thumbnails", e);
+            }
+            catch (Throwable t)
+            {
+                // No stack trace here - the exception is always the same expected
+                // "no JavaFX toolkit" failure and carries no useful diagnostic detail.
+                LOG.warn("Skipping basis image thumbnails (GUI-only; not available in this context).");
             }
         }
     }

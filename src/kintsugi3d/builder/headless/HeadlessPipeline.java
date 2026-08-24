@@ -11,7 +11,7 @@
 
 package kintsugi3d.builder.headless;
 
-import kintsugi3d.builder.core.DefaultProgressMonitor;
+import kintsugi3d.builder.core.ConsoleProgressMonitor;
 import kintsugi3d.builder.core.RenderableInstance;
 import kintsugi3d.builder.core.SimpleLoadOptionsModel;
 import kintsugi3d.builder.core.UserCancellationException;
@@ -20,6 +20,7 @@ import kintsugi3d.builder.fit.SpecularFitProcess;
 import kintsugi3d.builder.fit.settings.ExportSettings;
 import kintsugi3d.builder.fit.settings.SpecularFitSettings;
 import kintsugi3d.builder.io.ViewSetLoadOptions;
+import kintsugi3d.builder.io.ViewSetWriterToVSET;
 import kintsugi3d.builder.io.metashape.MetashapeModel;
 import kintsugi3d.builder.resources.project.GraphicsResourcesImageSpace;
 import kintsugi3d.builder.resources.project.MeshImportException;
@@ -140,7 +141,7 @@ public final class HeadlessPipeline implements AutoCloseable
         }
 
         redirectPreviewCache(builder);
-        renderable = ProjectRenderingEngine.createHeadless("headless", context, builder);
+        renderable = ProjectRenderingEngine.createHeadless("headless", context, builder, new ConsoleProgressMonitor());
     }
 
     /**
@@ -214,8 +215,19 @@ public final class HeadlessPipeline implements AutoCloseable
             settings.setOutputDirectory(getResources().getViewSet().getSupportingFilesDirectory());
         }
 
-        new SpecularFitProcess(settings).optimizeFitWithCache(getResources(), new DefaultProgressMonitor());
+        new SpecularFitProcess(settings).optimizeFitWithCache(getResources(), new ConsoleProgressMonitor());
         renderable.reloadShaders();
+    }
+
+    /**
+     * Saves the currently loaded project's view set as a standalone .vset project file, so it can be
+     * reopened later in the Kintsugi 3D Builder GUI (File > Open Project). The file's parent directory
+     * becomes the view set's root directory - referenced paths (supporting files, geometry) are written
+     * relative to it, so keep it inside (or alongside) the rest of the project's output.
+     */
+    public void saveVSET(File file) throws IOException
+    {
+        ViewSetWriterToVSET.getInstance().writeToFile(getResources().getViewSet(), file);
     }
 
     public void exportGltf(File outputDirectory, ExportSettings settings)

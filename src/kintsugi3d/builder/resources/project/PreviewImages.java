@@ -112,7 +112,7 @@ class PreviewImages
     {
         try
         {
-            LOG.info("Undistorting preview image {}", viewIndex);
+            LOG.trace("Undistorting preview image {}", viewIndex);
 
             DistortionProjection distortion = (DistortionProjection) viewSet.getCameraProjection(projectionIndex);
 
@@ -260,12 +260,12 @@ class PreviewImages
 
     private static void logExists(File file)
     {
-        LOG.info("Skipping {} : Already exists", file);
+        LOG.trace("Skipping {} : Already exists", file);
     }
 
     private static void logFinished(File fileFinished)
     {
-        LOG.info("Finished {}", fileFinished);
+        LOG.trace("Finished {}", fileFinished);
     }
 
     private void markCreated()

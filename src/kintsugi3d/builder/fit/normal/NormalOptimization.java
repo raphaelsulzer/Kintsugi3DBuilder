@@ -77,7 +77,7 @@ public class NormalOptimization<ContextType extends Context<ContextType>> implem
             // Clear framebuffer
             backFramebuffer.clearColorBuffer(0, 0.5f, 0.5f, 1.0f, 1.0f);
 
-            LOG.debug("Estimating normals...");
+            LOG.trace("Estimating normals...");
         });
 
         smoothNormals.addSetupCallback((smoothProgram, backFramebuffer) ->
@@ -99,17 +99,17 @@ public class NormalOptimization<ContextType extends Context<ContextType>> implem
             // Clear framebuffer
             backFramebuffer.clearColorBuffer(0, 0.5f, 0.5f, 1.0f, 1.0f);
 
-            LOG.debug("Smoothing normals...");
+            LOG.trace("Smoothing normals...");
         });
 
         estimateNormals.addPostUpdateCallback(framebuffer ->
         {
-            LOG.debug("DONE!");
+            LOG.trace("DONE!");
         });
 
         smoothNormals.addPostUpdateCallback(framebuffer ->
         {
-            LOG.debug("DONE!");
+            LOG.trace("DONE!");
         });
     }
 
