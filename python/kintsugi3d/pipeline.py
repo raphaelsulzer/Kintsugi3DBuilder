@@ -12,6 +12,7 @@ Python exception hierarchy.
 
 import math
 import os
+from pathlib import Path
 
 import jpype
 
@@ -175,7 +176,7 @@ def pose_from_quaternion_translation(qw, qx, qy, qz, tx, ty, tz):
 
 
 def build_view_set(project_root, cameras, *, supporting_files_directory=None,
-                    full_res_image_directory=None, geometry_file=None):
+                    full_res_image_directory=None, geometry_file=None, masks_directory=None):
     """Builds a Java ViewSet directly from plain pose/intrinsics data - for callers that
     already have per-view camera data (from any SfM tool) rather than a Kintsugi3D project
     file. This is the same construction pattern
@@ -194,6 +195,12 @@ def build_view_set(project_root, cameras, *, supporting_files_directory=None,
 
     Cameras sharing identical intrinsics are grouped into a single projection, mirroring
     ViewSetReaderFromRealityCaptureCSV's own grouping.
+
+    masks_directory: if given, each camera's mask is looked up in this directory by filename
+    stem (e.g. RIG_42833.JPG -> RIG_42833.png) and set via setCurrentMaskFile(). Without this,
+    every pixel of every source photo - including large background regions the mesh doesn't
+    even cover - is treated as valid scene data, which can badly contaminate per-texel average
+    color computation (e.g. a solid black backdrop pulling the whole fit toward black/gray).
 
     Returns the raw Java ViewSet object, for use with Kintsugi3DPipeline.load_from_view_set().
     """
@@ -230,11 +237,16 @@ def build_view_set(project_root, cameras, *, supporting_files_directory=None,
         pose_matrix = Matrix4.fromRows(
             Vector4(*pose[0:4]), Vector4(*pose[4:8]), Vector4(*pose[8:12]), Vector4(*pose[12:16]))
 
-        (builder.setCurrentCameraPose(pose_matrix)
+        camera_builder = (builder.setCurrentCameraPose(pose_matrix)
             .setCurrentCameraProjectionIndex(projection_indices[intrinsics_key])
             .setCurrentLightIndex(0)
-            .setCurrentImageFile(jpype.java.io.File(os.fspath(camera["image_file"])))
-            .commitCurrentCameraPose())
+            .setCurrentImageFile(jpype.java.io.File(os.fspath(camera["image_file"]))))
+
+        if masks_directory is not None:
+            mask_file = Path(masks_directory) / (Path(camera["image_file"]).stem + ".png")
+            camera_builder = camera_builder.setCurrentMaskFile(_jfile(mask_file))
+
+        camera_builder.commitCurrentCameraPose()
 
     # Light co-located with the camera (zero position), unit (not zero) intensity - treats every photo as
     # lit by a normalized, uncalibrated flash, the same convention ViewSetReaderFromAgisoftXML uses for
@@ -244,6 +256,11 @@ def build_view_set(project_root, cameras, *, supporting_files_directory=None,
 
     if full_res_image_directory is not None:
         builder.setFullResImageDirectory(_jfile(full_res_image_directory))
+
+    if masks_directory is not None:
+        # getMask() re-joins this directory with each per-camera mask filename set above via
+        # setCurrentMaskFile() - both are required, not just one or the other.
+        builder.setMasksDirectory(_jfile(masks_directory))
 
     if supporting_files_directory is not None:
         builder.setRelativeSupportingFilesPathName(os.fspath(supporting_files_directory))
