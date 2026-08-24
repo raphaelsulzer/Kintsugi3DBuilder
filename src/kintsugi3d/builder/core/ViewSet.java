@@ -495,7 +495,7 @@ public final class ViewSet implements ReadonlyViewSet, Observable
          */
         public Builder setRelativeSupportingFilesPathName(String relativePath)
         {
-            result.supportingFilesDirectory = result.rootDirectory.toPath().resolve(relativePath).toFile();
+            result.setSupportingFilesDirectory(result.rootDirectory.toPath().resolve(relativePath).toFile());
             return this;
         }
 

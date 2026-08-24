@@ -15,6 +15,7 @@ import kintsugi3d.builder.core.DefaultProgressMonitor;
 import kintsugi3d.builder.core.RenderableInstance;
 import kintsugi3d.builder.core.SimpleLoadOptionsModel;
 import kintsugi3d.builder.core.UserCancellationException;
+import kintsugi3d.builder.core.ViewSet;
 import kintsugi3d.builder.fit.SpecularFitProcess;
 import kintsugi3d.builder.fit.settings.ExportSettings;
 import kintsugi3d.builder.fit.settings.SpecularFitSettings;
@@ -103,6 +104,25 @@ public final class HeadlessPipeline implements AutoCloseable
         throws IOException, MeshImportException, XMLStreamException, MissingImagesException, InitializationException
     {
         load(newBuilder().loadFromMetashapeModel(model));
+    }
+
+    /**
+     * Loads a project from an already-constructed ViewSet (camera poses, intrinsics, per-view image
+     * filenames, and geometry file reference already set on it) rather than parsing a project file - for
+     * callers that build the ViewSet directly (e.g. from another tool's own camera/pose data via
+     * ViewSet.getBuilder(...), the same pattern kintsugi3d.builder.io.ViewSetReaderFromRealityCaptureCSV
+     * uses) instead of writing an intermediate file. useExistingViewSet doesn't re-run the preview-resolution
+     * wiring that setImageLoadOptions normally performs when a view set is already present, so that's
+     * applied explicitly here.
+     */
+    public void loadFromViewSet(ViewSet viewSet) throws InitializationException
+    {
+        SimpleLoadOptionsModel loadOptions = new SimpleLoadOptionsModel();
+        viewSet.setPreviewImageResolution(loadOptions.getPreviewImageWidth(), loadOptions.getPreviewImageHeight());
+
+        load(GraphicsResourcesImageSpace.getBuilderForContext(context)
+            .setImageLoadOptions(loadOptions)
+            .useExistingViewSet(viewSet));
     }
 
     private GraphicsResourcesImageSpace.Builder<OpenGLContext> newBuilder()

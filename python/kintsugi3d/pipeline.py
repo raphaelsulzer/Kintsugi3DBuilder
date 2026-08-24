@@ -10,6 +10,7 @@ Java exceptions propagate as jpype.JException; they are not wrapped in a custom
 Python exception hierarchy.
 """
 
+import math
 import os
 
 import jpype
@@ -19,6 +20,8 @@ from .jvm import start_jvm
 __all__ = [
     "Kintsugi3DPipeline",
     "view_set_load_options",
+    "pose_from_quaternion_translation",
+    "build_view_set",
     "new_specular_fit_settings",
     "new_export_settings",
 ]
@@ -72,6 +75,10 @@ class Kintsugi3DPipeline:
     def load_from_loose_files(self, camera_file, load_options):
         """load_options: a Java ViewSetLoadOptions object, e.g. from view_set_load_options()."""
         self._java.loadFromLooseFiles(_jfile(camera_file), load_options)
+
+    def load_from_view_set(self, view_set):
+        """view_set: a Java ViewSet object, e.g. from build_view_set()."""
+        self._java.loadFromViewSet(view_set)
 
     def load_from_metashape(self, psx_file, chunk_label=None):
         """Imports a full Metashape .psx project. If chunk_label is None, the project's
@@ -138,6 +145,97 @@ def view_set_load_options(camera_file, *, project_root=None, supporting_files_di
     options.orientationViewRotation = orientation_view_rotation
 
     return options
+
+
+def pose_from_quaternion_translation(qw, qx, qy, qz, tx, ty, tz):
+    """Builds a 16-float row-major world-to-camera 4x4 matrix [R t; 0 1] from a
+    world-to-camera quaternion (w, x, y, z order) and translation - the convention COLMAP,
+    kintsugi3d.builder.core.ViewSet, and most SfM tools' camera poses all share. Pure
+    Python geometry, not specific to any particular SfM tool's file format; the result is
+    ready to pass as a camera's 'pose' entry to build_view_set().
+    """
+    norm = math.sqrt(qw * qw + qx * qx + qy * qy + qz * qz)
+    qw, qx, qy, qz = qw / norm, qx / norm, qy / norm, qz / norm
+
+    return [
+        1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw), tx,
+        2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw), ty,
+        2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy), tz,
+        0.0, 0.0, 0.0, 1.0,
+    ]
+
+
+def build_view_set(project_root, cameras, *, supporting_files_directory=None,
+                    full_res_image_directory=None, geometry_file=None):
+    """Builds a Java ViewSet directly from plain pose/intrinsics data - for callers that
+    already have per-view camera data (from any SfM tool) rather than a Kintsugi3D project
+    file. This is the same construction pattern
+    kintsugi3d.builder.io.ViewSetReaderFromRealityCaptureCSV uses (ViewSet.getBuilder(...) +
+    one DistortionProjection per distinct set of intrinsics), just driven from Python
+    instead of a specific file format's Java reader - so there's no intermediate file
+    format to get right, and no unit conversion: DistortionProjection's width/height/
+    fx/fy/cx/cy are plain pixel values, not physical sensor millimeters.
+
+    cameras: a list of dicts, one per view, each with:
+      'pose': 16 floats, row-major world-to-camera 4x4 matrix (see pose_from_quaternion_translation)
+      'width', 'height': int, in pixels
+      'fx', 'fy', 'cx', 'cy': float, in pixels
+      'k1', 'k2', 'k3', 'k4', 'p1', 'p2': float, optional, default 0.0 (radial/tangential distortion)
+      'image_file': str or Path - resolved against full_res_image_directory
+
+    Cameras sharing identical intrinsics are grouped into a single projection, mirroring
+    ViewSetReaderFromRealityCaptureCSV's own grouping.
+
+    Returns the raw Java ViewSet object, for use with Kintsugi3DPipeline.load_from_view_set().
+    """
+    ViewSetClass = jpype.JClass("kintsugi3d.builder.core.ViewSet")
+    DistortionProjection = jpype.JClass("kintsugi3d.builder.core.DistortionProjection")
+    Matrix4 = jpype.JClass("kintsugi3d.gl.vecmath.Matrix4")
+    Vector4 = jpype.JClass("kintsugi3d.gl.vecmath.Vector4")
+    Vector3 = jpype.JClass("kintsugi3d.gl.vecmath.Vector3")
+
+    builder = ViewSetClass.getBuilder(_jfile(project_root), len(cameras))
+
+    if geometry_file is not None:
+        builder.setGeometryFile(_jfile(geometry_file))
+
+    projection_indices = {}
+    for camera in cameras:
+        intrinsics_key = (
+            camera["width"], camera["height"], camera["fx"], camera["fy"],
+            camera["cx"], camera["cy"], camera.get("k1", 0.0), camera.get("k2", 0.0),
+            camera.get("k3", 0.0), camera.get("k4", 0.0), camera.get("p1", 0.0), camera.get("p2", 0.0),
+        )
+
+        if intrinsics_key not in projection_indices:
+            projection_indices[intrinsics_key] = builder.getNextCameraProjectionIndex()
+            builder.addCameraProjection(DistortionProjection(
+                float(camera["width"]), float(camera["height"]),
+                float(camera["fx"]), float(camera["fy"]),
+                float(camera["cx"]), float(camera["cy"]),
+                float(camera.get("k1", 0.0)), float(camera.get("k2", 0.0)),
+                float(camera.get("k3", 0.0)), float(camera.get("k4", 0.0)),
+                float(camera.get("p1", 0.0)), float(camera.get("p2", 0.0)), 0.0))
+
+        pose = [float(v) for v in camera["pose"]]
+        pose_matrix = Matrix4.fromRows(
+            Vector4(*pose[0:4]), Vector4(*pose[4:8]), Vector4(*pose[8:12]), Vector4(*pose[12:16]))
+
+        (builder.setCurrentCameraPose(pose_matrix)
+            .setCurrentCameraProjectionIndex(projection_indices[intrinsics_key])
+            .setCurrentLightIndex(0)
+            .setCurrentImageFile(jpype.java.io.File(os.fspath(camera["image_file"])))
+            .commitCurrentCameraPose())
+
+    builder.addLight(Vector3.ZERO, Vector3.ZERO)
+
+    if full_res_image_directory is not None:
+        builder.setFullResImageDirectory(_jfile(full_res_image_directory))
+
+    if supporting_files_directory is not None:
+        builder.setRelativeSupportingFilesPathName(os.fspath(supporting_files_directory))
+
+    return builder.finish()
 
 
 def new_specular_fit_settings(width, height):
