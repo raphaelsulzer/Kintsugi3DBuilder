@@ -80,7 +80,14 @@ public class SingleCalibratedImageResource<ContextType extends Context<ContextTy
                 try (ImageUndistorter<ContextType> undistorter = new ImageUndistorter<>(context);
                      Texture2D<ContextType> distortedTexture = colorTextureBuilder.createTexture())
                 {
-                    colorTexture = undistorter.undistort(distortedTexture, distortion);
+                    // width/height/fx/fy/cx/cy are declared relative to the calibrated sensor's own
+                    // resolution, but imageFile can be a proxy at a different resolution (e.g. a
+                    // downscaled copy kept alongside full-resolution calibration data) - rescale to
+                    // match what was actually loaded, the same way PreviewImages already does for its
+                    // own (deliberately downscaled) output size.
+                    DistortionProjection scaledDistortion =
+                        distortion.scaledTo(distortedTexture.getWidth(), distortedTexture.getHeight());
+                    colorTexture = undistorter.undistort(distortedTexture, scaledDistortion);
                 }
             }
             else

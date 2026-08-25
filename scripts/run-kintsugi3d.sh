@@ -14,4 +14,6 @@ mkdir -p "$tmp_dir"
 
 cd "$repo_root"
 
-exec java -Djava.io.tmpdir="$tmp_dir" -jar "$jar_path" "$@"
+# Keep the app's cache (preview images, specular-fit image cache) inside the repo instead of
+# ~/.Kintsugi3DBuilder, so it can be wiped by just deleting cache/ and stays out of $HOME.
+exec java -Djava.io.tmpdir="$tmp_dir" -DKintsugi3D.cacheDir="$repo_root/cache" -jar "$jar_path" "$@"

@@ -11,6 +11,7 @@
 
 package kintsugi3d.builder.headless;
 
+import kintsugi3d.builder.app.ApplicationFolders;
 import kintsugi3d.builder.core.ConsoleProgressMonitor;
 import kintsugi3d.builder.core.RenderableInstance;
 import kintsugi3d.builder.core.SimpleLoadOptionsModel;
@@ -213,6 +214,14 @@ public final class HeadlessPipeline implements AutoCloseable
         if (settings.getOutputDirectory() == null)
         {
             settings.setOutputDirectory(getResources().getViewSet().getSupportingFilesDirectory());
+        }
+
+        if (settings.getImageCacheSettings().getCacheParentDirectory() == null)
+        {
+            // SpecularFitRequest (the GUI's fit-invocation class) sets this; headless calls
+            // SpecularFitProcess directly, so without this it defaults to a relative path resolved
+            // against the JVM's working directory instead of the standard application cache.
+            settings.getImageCacheSettings().setCacheParentDirectory(ApplicationFolders.getFitCacheRootDirectory().toFile());
         }
 
         new SpecularFitProcess(settings).optimizeFitWithCache(getResources(), new ConsoleProgressMonitor());

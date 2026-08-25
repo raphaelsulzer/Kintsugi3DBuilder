@@ -95,3 +95,4 @@ target/*
 bin/
 /viewer
 /test-output/
+/cache/

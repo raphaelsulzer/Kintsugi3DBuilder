@@ -100,7 +100,10 @@ def start_jvm(jar_path=None) -> None:
     _ensure_display()
     os.chdir(_repo_root())
 
-    jpype.startJVM(classpath=[str(jar)])
+    # Keep the app's cache (preview images, specular-fit image cache) inside the repo instead of
+    # ~/.Kintsugi3DBuilder, so it can be wiped by just deleting cache/ and stays out of $HOME.
+    cache_dir = _repo_root() / "cache"
+    jpype.startJVM(f"-DKintsugi3D.cacheDir={cache_dir}", classpath=[str(jar)])
 
     if not _shutdown_registered:
         atexit.register(jpype.shutdownJVM)
