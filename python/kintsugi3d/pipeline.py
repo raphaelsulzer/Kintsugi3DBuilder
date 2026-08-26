@@ -159,18 +159,28 @@ def view_set_load_options(camera_file, *, project_root=None, supporting_files_di
 
 def pose_from_quaternion_translation(qw, qx, qy, qz, tx, ty, tz):
     """Builds a 16-float row-major world-to-camera 4x4 matrix [R t; 0 1] from a
-    world-to-camera quaternion (w, x, y, z order) and translation - the convention COLMAP,
-    kintsugi3d.builder.core.ViewSet, and most SfM tools' camera poses all share. Pure
-    Python geometry, not specific to any particular SfM tool's file format; the result is
-    ready to pass as a camera's 'pose' entry to build_view_set().
+    world-to-camera quaternion (w, x, y, z order) and translation, in COLMAP's own camera
+    convention (X right, Y down, Z forward - i.e. the camera looks down its local +Z axis).
+
+    kintsugi3d.builder.core.ViewSet does NOT share that convention directly - it expects
+    camera poses in OpenGL's convention instead (X right, Y up, Z backward - the camera
+    looks down its local -Z axis), the same convention every other Kintsugi3D reader
+    (e.g. ViewSetReaderFromAgisoftXML's Metashape import, verified directly against
+    Kintsugi3DBuilder's own Metashape test data) converts its source tool's camera
+    representation into before calling setCurrentCameraPose(). Converting from COLMAP's
+    convention to OpenGL's is a 180-degree rotation about the local X axis, i.e. negating
+    the whole Y and Z rows (rotation AND translation) of the naive [R t; 0 1] COLMAP
+    matrix - skipping this produces exactly the symptom that caught the bug: camera
+    positions and the mesh appearing correct independently, but flipped/wrong relative to
+    each other once loaded into Kintsugi3D.
     """
     norm = math.sqrt(qw * qw + qx * qx + qy * qy + qz * qz)
     qw, qx, qy, qz = qw / norm, qx / norm, qy / norm, qz / norm
 
     return [
         1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw), tx,
-        2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw), ty,
-        2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy), tz,
+        -(2 * (qx * qy + qz * qw)), -(1 - 2 * (qx * qx + qz * qz)), -(2 * (qy * qz - qx * qw)), -ty,
+        -(2 * (qx * qz - qy * qw)), -(2 * (qy * qz + qx * qw)), -(1 - 2 * (qx * qx + qy * qy)), -tz,
         0.0, 0.0, 0.0, 1.0,
     ]
 
