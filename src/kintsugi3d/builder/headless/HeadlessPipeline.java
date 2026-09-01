@@ -66,6 +66,20 @@ public final class HeadlessPipeline implements AutoCloseable
     {
         this.window = window;
         this.context = window.getContext();
+
+        // The GUI's own production render path (Rendering.java) enables depth testing once at
+        // startup, as a side effect of setting up its live 3D view - every occlusion/shadow
+        // depth-map render (DepthMapGenerator) then implicitly relies on that ambient GL state
+        // already being on, since it never enables depth testing itself. A headless run never
+        // executes any of that GUI startup code, so GL_DEPTH_TEST stays at its default (off):
+        // depth-map renders silently write no real depth values, every self-depth-comparison
+        // occlusion/shadow test in imgspace_single.glsl then fails for every texel in every
+        // view (comparing each point's own depth against an untouched, cleared depth buffer),
+        // and the specular fit's initial color map ends up with zero valid (alpha >= 1) texels
+        // (KMeansClustering: "Color map does not contain any valid elements."). Enabling it
+        // here mirrors the GUI's own one-time setup, scoped entirely to this headless entry
+        // point - it does not touch any GUI code path.
+        context.getState().enableDepthTest();
     }
 
     /**
