@@ -132,6 +132,34 @@ class Kintsugi3DPipeline:
         to it, so keep it inside (or alongside) the rest of the project's output."""
         self._java.saveVSET(_jfile(file))
 
+    def calibrate_light_position(self, x, y):
+        """Sets the physical offset between the flash and the lens optical axis - what the GUI's
+        interactive "Light Calibration" task (LightCalibrationController.confirm() ->
+        IOModel.applyLightCalibration()) writes when the user drags its X/Y sliders and confirms.
+        This is a thin wrapper around the same underlying call
+        (GraphicsResources.updateLightCalibration(Vector3)), reached here via `resources` rather
+        than through any GUI-only plumbing (ProjectInstanceManager/Global.state()).
+
+        x, y: offset in camera-local space (x = right, y = up, from the lens's point of view),
+        in the same world-space units as the loaded geometry/camera poses - NOT pixels, and not
+        the on-screen slider's arbitrary display range. A flash mounted to the camera's right and
+        above the lens needs positive x and positive y. Applied uniformly to every view via
+        ViewSet.setLightPosition() (see GraphicsResourcesBase.updateLightCalibration()), the same
+        way build_view_set() gives every view a single shared light index - correct for a rig
+        with one on-axis flash held in a fixed physical position relative to the lens for the
+        whole capture.
+
+        There is no headless equivalent of the interactive part of this task: the GUI's
+        split-screen live preview is how a user *finds* the right x/y by eye (nudging the
+        sliders until specular highlights line up). This call only *applies* an already-known
+        offset - measured directly on the physical rig, or determined once interactively via the
+        GUI on a representative project and reused here for every subsequent headless run of the
+        same physical camera+flash mount. Independent of calibrateLightIntensities() (light
+        *intensity*, from camera-to-centroid distance) - call in either order relative to it.
+        """
+        Vector3 = jpype.JClass("kintsugi3d.gl.vecmath.Vector3")
+        self.resources.updateLightCalibration(Vector3(float(x), float(y), 0.0))
+
 
 def view_set_load_options(camera_file, *, project_root=None, supporting_files_directory=None,
                            full_res_image_directory=None, full_res_images_need_undistort=False,
