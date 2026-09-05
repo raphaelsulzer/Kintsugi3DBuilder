@@ -44,42 +44,60 @@ void main()
         vec4 imgColor = getLinearColor(k);
         vec3 view = normalize(getViewVector(k, position));
         float triangleNDotV = max(0.0, dot(triangleNormal, view));
-
-        LightInfo lightInfo = getLightInfo(k);
-        vec3 light = lightInfo.normalizedDirection;
-        vec3 halfway = normalize(light + view);
-        float nDotH = max(0.0, dot(fittedNormal, halfway));
-        float nDotL = max(0.0, dot(fittedNormal, light));
         float nDotV = max(0.0, dot(fittedNormal, view));
 
-        // "Light intensity" is defined in such a way that we need to multiply by pi to be properly normalized.
-        vec3 incidentRadiance = PI * lightInfo.attenuatedIntensity;
+        // Under simultaneous multi-light illumination, compare radiance directly instead of dividing imgColor
+        // by one light's irradiance to get "actual reflectance" (see estimateDiffuse.frag for the derivation).
+        // The estimated side is the sum, over all LIGHTS_PER_VIEW lights, of that light's predicted radiance
+        // contribution. This reduces exactly to the original single-light formula when LIGHTS_PER_VIEW == 1.
+        vec3 estimatedRadianceSum = vec3(0.0);
+        bool anyValid = false;
 
-        vec3 actualReflectanceTimesNDotL = imgColor.rgb / incidentRadiance;
-        if (sRGB)
+        for (int slot = 0; slot < LIGHTS_PER_VIEW; slot++)
         {
-            actualReflectanceTimesNDotL = linearToSRGB(actualReflectanceTimesNDotL);
+            LightInfo lightInfo = getLightInfoForSlot(k, slot, position);
+            vec3 light = lightInfo.normalizedDirection;
+            vec3 halfway = normalize(light + view);
+            float nDotH = max(0.0, dot(fittedNormal, halfway));
+            float nDotL = max(0.0, dot(fittedNormal, light));
+
+            // "Light intensity" is defined in such a way that we need to multiply by pi to be properly normalized.
+            vec3 incidentRadiance = PI * lightInfo.attenuatedIntensity;
+
+            if (nDotH > 0.0 && nDotL > 0.0 && nDotV > 0.0 && filteredMask > 0.0)
+            {
+                float hDotV = max(0.0, dot(halfway, view));
+                float maskingShadowing = geom(roughness, nDotH, nDotV, nDotL, hDotV);
+                vec3 specular = getMFDEstimate(nDotH) * maskingShadowing / (4 * nDotV);
+                vec3 reflectanceEstimateTimesNDotL = diffuseColor * nDotL / PI + specular;
+
+                estimatedRadianceSum += reflectanceEstimateTimesNDotL * incidentRadiance;
+                anyValid = true;
+            }
         }
 
         float weight = imgColor.a * triangleNDotV;
 
-        if (nDotH > 0.0 && nDotL > 0.0 && nDotV > 0.0 && filteredMask > 0.0)
+        vec3 actualRadiance = imgColor.rgb;
+        if (sRGB)
         {
-            float hDotV = max(0.0, dot(halfway, view));
-            float maskingShadowing = geom(roughness, nDotH, nDotV, nDotL, hDotV);
-            vec3 specular = getMFDEstimate(nDotH) * maskingShadowing / (4 * nDotV);
-            vec3 reflectanceEstimateTimesNDotL = diffuseColor * nDotL / PI + specular;
+            actualRadiance = linearToSRGB(actualRadiance);
+        }
+
+        if (anyValid)
+        {
+            vec3 estimatedRadiance = estimatedRadianceSum;
             if (sRGB)
             {
-                reflectanceEstimateTimesNDotL = linearToSRGB(reflectanceEstimateTimesNDotL);
+                estimatedRadiance = linearToSRGB(estimatedRadiance);
             }
 
-            vec3 diff = actualReflectanceTimesNDotL - reflectanceEstimateTimesNDotL;
+            vec3 diff = actualRadiance - estimatedRadiance;
             error += weight * dot(diff, diff);
         }
         else
         {
-            error += weight * dot(actualReflectanceTimesNDotL, actualReflectanceTimesNDotL);
+            error += weight * dot(actualRadiance, actualRadiance);
         }
 
         validCount += 3 * weight;
