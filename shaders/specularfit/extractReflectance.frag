@@ -27,13 +27,15 @@
 // once per light slot), while cross-light terms are handled by a dedicated accumulator, since two
 // independently-varying half-angle positions per sample cannot be handled by a single 1D sorted sweep.
 // This reduces exactly to the original single-light behavior when LIGHTS_PER_VIEW == 1.
+// GLSL 330 layout(location=...) qualifiers only accept a bare integer literal, not a constant
+// EXPRESSION (that requires GLSL 4.40/ARB_enhanced_layouts) -- so a second array output can't sit at a
+// LIGHTS_PER_VIEW-dependent location like "1 + LIGHTS_PER_VIEW". Instead, everything past the shared
+// observedRadiance_visibility is packed into ONE array (array SIZE can still be a constant expression;
+// only the layout qualifier itself can't be) at a single fixed location:
+//   outputData[0 .. LIGHTS_PER_VIEW)                     = halfway/geomRatio/weight/validity, per light
+//   outputData[LIGHTS_PER_VIEW .. 2*LIGHTS_PER_VIEW)      = incident radiance, per light (see below)
 layout(location = 0) out vec4 observedRadiance_visibility;
-layout(location = 1) out vec4 halfway_geom_weight[LIGHTS_PER_VIEW];
-// Per-light incident radiance (PI * attenuatedIntensity), needed by the per-texel weight-fitting step
-// (SpecularWeightModel) to convert each light's basis-predicted reflectance into that light's own
-// contribution to the shared observed radiance -- geomRatio alone (unlike in the single-light case) is no
-// longer enough once "reflectance" can no longer be recovered by dividing out one light's irradiance.
-layout(location = 1 + LIGHTS_PER_VIEW) out vec4 incidentRadiance[LIGHTS_PER_VIEW];
+layout(location = 1) out vec4 outputData[2 * LIGHTS_PER_VIEW];
 
 void main()
 {
@@ -120,10 +122,10 @@ void main()
 
     for (int slot = 0; slot < LIGHTS_PER_VIEW; slot++)
     {
-        halfway_geom_weight[slot] = valid[slot]
+        outputData[slot] = valid[slot]
             ? vec4(halfwayIndices[slot], geomRatios[slot], sharedWeight, 1.0) // 1.0: validity flag for this slot
             : vec4(0.0);
-        incidentRadiance[slot] = vec4(incidentRadiances[slot], valid[slot] ? 1.0 : 0.0);
+        outputData[LIGHTS_PER_VIEW + slot] = vec4(incidentRadiances[slot], valid[slot] ? 1.0 : 0.0);
     }
 
     observedRadiance_visibility = vec4(imgColor.rgb, imgColor.a);
