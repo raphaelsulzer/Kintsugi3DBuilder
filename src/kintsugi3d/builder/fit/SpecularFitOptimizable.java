@@ -32,6 +32,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.HashMap;
@@ -248,6 +249,20 @@ public final class SpecularFitOptimizable<ContextType extends Context<ContextTyp
             convergenceTolerance, monitor);
     }
 
+    /**
+     * Splits the reflectance-extraction framebuffer readback (see SpecularFitProcess.optimizeTexSpaceFit
+     * and extractReflectance.frag) into a ReflectanceData: attachment 0 is the shared observed radiance /
+     * visibility; the next LIGHTS_PER_VIEW attachments are each light's halfway/geomRatio/weight/validity;
+     * the final LIGHTS_PER_VIEW attachments are each light's incident radiance.
+     */
+    private static ReflectanceData toReflectanceData(ColorList[] framebufferData)
+    {
+        int lightsPerView = (framebufferData.length - 1) / 2;
+        return new ReflectanceData(framebufferData[0],
+            Arrays.copyOfRange(framebufferData, 1, 1 + lightsPerView),
+            Arrays.copyOfRange(framebufferData, 1 + lightsPerView, 1 + 2 * lightsPerView));
+    }
+
     private void weightAndNormalIteration(SpecularDecomposition specularDecomposition, GraphicsStream<ColorList[]> reflectanceStream,
         SpecularWeightOptimization weightOptimization, double convergenceTolerance, File debugDirectory)
     {
@@ -322,7 +337,7 @@ public final class SpecularFitOptimizable<ContextType extends Context<ContextTyp
         // Set up a stream and pass it to the BRDF reconstruction module to give it access to the reflectance information.
         // Operate in parallel for optimal performance.
         brdfReconstruction.execute(
-            reflectanceStreamParallel.map(framebufferData -> new ReflectanceData(framebufferData[0], framebufferData[1])),
+            reflectanceStreamParallel.map(SpecularFitOptimizable::toReflectanceData),
             specularDecomposition, monitor);
 
         // Use the current front normal buffer for calculating error.
@@ -356,7 +371,7 @@ public final class SpecularFitOptimizable<ContextType extends Context<ContextTyp
             }
 
             weightOptimization.execute(
-                reflectanceStream.map(framebufferData -> new ReflectanceData(framebufferData[0], framebufferData[1])),
+                reflectanceStream.map(SpecularFitOptimizable::toReflectanceData),
                 specularDecomposition, i * weightBlockSize);
 
             if (debugDirectory != null)

@@ -1928,6 +1928,7 @@ public final class ViewSet implements ReadonlyViewSet, Observable
             .define("CAMERA_POSE_COUNT", getCombinedCameraPoseCount())
             .define("CAMERA_PROJECTION_COUNT", getCameraProjectionCount())
             .define("LIGHT_COUNT", getLightCount())
+            .define("LIGHTS_PER_VIEW", projectSettings.getInt("lightsPerView"))
             .define("INFINITE_LIGHT_SOURCES", projectSettings.getBoolean("infiniteLightSources"))
             .define("FLATFIELD_CORRECTED", projectSettings.getBoolean("flatfieldCorrected"))
             .define("LUMINANCE_MAP_ENABLED", hasCustomLuminanceEncoding())

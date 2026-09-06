@@ -15,6 +15,7 @@ import kintsugi3d.builder.fit.ReflectanceData;
 import kintsugi3d.builder.fit.settings.BasisOptimizationSettings;
 import kintsugi3d.optimization.MatrixSystem;
 import kintsugi3d.optimization.function.BasisFunctions;
+import kintsugi3d.optimization.function.CrossLightAccumulator;
 import kintsugi3d.optimization.function.MatrixBuilder;
 import kintsugi3d.optimization.function.MatrixBuilderSample;
 import org.ejml.data.DMatrixRMaj;
@@ -26,6 +27,14 @@ import static org.ejml.dense.row.CommonOps_DDRM.multTransA;
 
 /**
  * A helper class to maintain state necessary to efficiently build the matrix that can solve for reflectance.
+ *
+ * <p>Under LIGHTS_PER_VIEW &gt; 1 (see {@link ReflectanceData}), one pixel sample carries a domain position
+ * PER LIGHT SLOT, all contributing to the same shared observed radiance. The same-light ("diagonal") terms
+ * and the RHS vector reduce exactly to the existing single-light sweep -- computed here by constructing one
+ * {@link MatrixBuilder} per light slot, each accumulating into the same shared {@link #contribution}. The
+ * cross-light terms (between every pair of light slots) cannot be produced by that sweep and are instead
+ * computed by {@link CrossLightAccumulator} -- see its Javadoc for why. This all reduces exactly to the
+ * original single-light behavior when there is only one light slot.
  */
 final class ReflectanceMatrixBuilder
 {
@@ -42,10 +51,7 @@ final class ReflectanceMatrixBuilder
      */
     private final SpecularDecomposition solution;
 
-    /**
-     * Underlying matrix builder utility.
-     */
-    private final MatrixBuilder matrixBuilder;
+    private final BasisFunctions stepBasis;
     private final BasisOptimizationSettings basisSettings;
 
     /**
@@ -66,24 +72,59 @@ final class ReflectanceMatrixBuilder
         //noinspection AssignmentOrReturnOfFieldWithMutableType
         this.reflectanceData = reflectanceData;
         this.basisSettings = settings;
+        this.stepBasis = stepBasis;
 
         this.contribution = contribution;
-
-        // Initialize running totals
-        matrixBuilder = new MatrixBuilder(this.basisSettings.getBasisCount(), 3, settings.getMetallicity(), stepBasis, contribution);
     }
 
     public void execute()
     {
-        matrixBuilder.build(
-            IntStream.range(0, reflectanceData.size())
-                .filter(p -> reflectanceData.getVisibility(p) > 0) // Eliminate pixels without valid samples
-                .mapToObj(p ->
-                    new MatrixBuilderSample(
-                        reflectanceData.getHalfwayIndex(p) * basisSettings.getBasisResolution(),
-                        matrixBuilder.getBasisLibrary(), reflectanceData.getGeomRatio(p),
-                        reflectanceData.getAdditionalWeight(p), b -> solution.getWeights(p).get(b),
-                        reflectanceData.getRed(p), reflectanceData.getGreen(p), reflectanceData.getBlue(p))));
+        int lightsPerView = reflectanceData.getLightsPerView();
+
+        // Same-light diagonal terms + RHS: one MatrixBuilder per light slot (each needs its own internal
+        // sweep state -- MatrixBuilder.build() is documented to only be called once per instance), all
+        // accumulating into the same shared `contribution`.
+        for (int slot = 0; slot < lightsPerView; slot++)
+        {
+            int slotFinal = slot;
+            MatrixBuilder matrixBuilder =
+                new MatrixBuilder(basisSettings.getBasisCount(), 3, basisSettings.getMetallicity(), stepBasis, contribution);
+
+            matrixBuilder.build(
+                IntStream.range(0, reflectanceData.size())
+                    .filter(p -> reflectanceData.isSlotValid(p, slotFinal)) // Eliminate pixels without valid samples for this light
+                    .mapToObj(p ->
+                        new MatrixBuilderSample(
+                            reflectanceData.getHalfwayIndex(p, slotFinal) * basisSettings.getBasisResolution(),
+                            matrixBuilder.getBasisLibrary(), reflectanceData.getGeomRatio(p, slotFinal),
+                            reflectanceData.getAdditionalWeight(p), b -> solution.getWeights(p).get(b),
+                            reflectanceData.getRed(p), reflectanceData.getGreen(p), reflectanceData.getBlue(p))));
+        }
+
+        // Cross-light terms: one CrossLightAccumulator per unordered pair of light slots.
+        for (int lightA = 0; lightA < lightsPerView; lightA++)
+        {
+            for (int lightB = lightA + 1; lightB < lightsPerView; lightB++)
+            {
+                int lightAFinal = lightA;
+                int lightBFinal = lightB;
+
+                CrossLightAccumulator crossLight =
+                    new CrossLightAccumulator(basisSettings.getBasisCount(), stepBasis, contribution);
+
+                IntStream.range(0, reflectanceData.size())
+                    .filter(p -> reflectanceData.isSlotValid(p, lightAFinal) && reflectanceData.isSlotValid(p, lightBFinal))
+                    .forEach(p -> crossLight.accumulate(
+                        b -> solution.getWeights(p).get(b), reflectanceData.getAdditionalWeight(p),
+                        reflectanceData.getHalfwayIndex(p, lightAFinal) * basisSettings.getBasisResolution(),
+                        reflectanceData.getGeomRatio(p, lightAFinal),
+                        reflectanceData.getHalfwayIndex(p, lightBFinal) * basisSettings.getBasisResolution(),
+                        reflectanceData.getGeomRatio(p, lightBFinal)));
+
+                crossLight.finish();
+            }
+        }
+
         if (VALIDATE)
         {
             validate();
@@ -100,6 +141,13 @@ final class ReflectanceMatrixBuilder
 
     private void validate()
     {
+        // This brute-force validation only covers the single-light case (it predates LIGHTS_PER_VIEW > 1
+        // support and does not attempt to replicate the cross-light term derivation in
+        // CrossLightAccumulator). It intentionally throws for multi-light configurations rather than
+        // silently validating only part of the system.
+        assertBool(reflectanceData.getLightsPerView() == 1,
+            "ReflectanceMatrixBuilder.validate() only supports LIGHTS_PER_VIEW == 1.");
+
         // Calculate the matrix products the slow way to make sure that the implementation is correct.
         SimpleMatrix mA = new SimpleMatrix(reflectanceData.size(),
                 basisSettings.getBasisCount() * (basisSettings.getBasisComplexity() + 1), DMatrixRMaj.class);
@@ -111,8 +159,8 @@ final class ReflectanceMatrixBuilder
         {
             if (reflectanceData.getVisibility(p) > 0)
             {
-                float halfwayIndex = reflectanceData.getHalfwayIndex(p);
-                float geomRatio = reflectanceData.getGeomRatio(p);
+                float halfwayIndex = reflectanceData.getHalfwayIndex(p, 0);
+                float geomRatio = reflectanceData.getGeomRatio(p, 0);
 
                 // square-root since we're minimizing the sum of w * | y - A x |^2, not w^2 * | y - A x |^2
                 float addlWeight = (float)Math.sqrt(reflectanceData.getAdditionalWeight(p));
@@ -129,7 +177,7 @@ final class ReflectanceMatrixBuilder
                 // If mFloor is clamped to BASIS_RESOLUTION -1, then mExact will be much larger, so t = 0.0.
                 double t = Math.max(0.0, 1.0 + mFloor - mExact);
 
-                double diffuseFactor = matrixBuilder.getMetallicity() * geomRatio + (1 - matrixBuilder.getMetallicity());
+                double diffuseFactor = stepBasis.getMetallicity() * geomRatio + (1 - stepBasis.getMetallicity());
 
                 for (int b = 0; b < basisSettings.getBasisCount(); b++)
                 {
@@ -140,11 +188,11 @@ final class ReflectanceMatrixBuilder
                     if (mExact < basisSettings.getBasisResolution())
                     {
                         // Iterate over the available step functions in the basis.
-                        for (int s = 0; s < matrixBuilder.getBasisLibrary().getFunctionCount(); s++)
+                        for (int s = 0; s < stepBasis.getFunctionCount(); s++)
                         {
                             // Evaluate each step function twice, to the left and right of the current sample.
-                            double fFloor = matrixBuilder.getBasisLibrary().evaluate(s, mFloor);
-                            double fCeil = matrixBuilder.getBasisLibrary().evaluate(s, mFloor + 1);
+                            double fFloor = stepBasis.evaluate(s, mFloor);
+                            double fCeil = stepBasis.evaluate(s, mFloor + 1);
 
                             // Blend between the two sampled locations.
                             // In the case of a simple step function, fFloor & fCeil will both be either 1 or 0

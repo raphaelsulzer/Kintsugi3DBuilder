@@ -186,7 +186,8 @@ def pose_from_quaternion_translation(qw, qx, qy, qz, tx, ty, tz):
 
 
 def build_view_set(project_root, cameras, *, supporting_files_directory=None,
-                    full_res_image_directory=None, geometry_file=None, masks_directory=None):
+                    full_res_image_directory=None, geometry_file=None, masks_directory=None,
+                    light_offsets=None, light_intensities=None):
     """Builds a Java ViewSet directly from plain pose/intrinsics data - for callers that
     already have per-view camera data (from any SfM tool) rather than a Kintsugi3D project
     file. This is the same construction pattern
@@ -211,6 +212,28 @@ def build_view_set(project_root, cameras, *, supporting_files_directory=None,
     every pixel of every source photo - including large background regions the mesh doesn't
     even cover - is treated as valid scene data, which can badly contaminate per-texel average
     color computation (e.g. a solid black backdrop pulling the whole fit toward black/gray).
+
+    light_offsets: optional list of (x, y, z) tuples, one per rig-mounted light source, each a
+    CAMERA-LOCAL offset from that camera's own position (ViewSet's OpenGL-style camera
+    convention: X right, Y up, Z backward - see pose_from_quaternion_translation's docstring).
+    Confirmed against ViewSet.java's addLight()/GPU upload (raw, un-transformed, indexed only
+    by light index) and colorappearance.glsl's getLightVector(): a light's world position for
+    view v is cameraWorldPos(v) + cameraRotation(v) * offset, i.e. it rigidly follows the
+    camera through every view rather than being fixed in world space - exactly the physical
+    setup of flashes bolted to a camera rig/arm. These offsets must already be in the SAME
+    units as `cameras`' poses (typically NOT meters for an unscaled SfM reconstruction -
+    callers must convert a real-world offset like "1 meter to the side" into scene units
+    themselves, e.g. via a known reference distance in the reconstruction). Every camera uses
+    all of these lights simultaneously (matches shaders/colorappearance.glsl's LIGHTS_PER_VIEW
+    convention: light index 0 is the shared base index for every view, and slot i of a view's
+    lights is light index i - so light_offsets[i] must line up with light_intensities[i] and
+    with the shader's LIGHTS_PER_VIEW build define, which must equal len(light_offsets)).
+    Defaults to a single on-axis light at (0, 0, 0) - the original single on-camera-flash
+    behavior - if not given.
+
+    light_intensities: optional list of (r, g, b) tuples, parallel to light_offsets. Defaults
+    to uniform (1.0, 1.0, 1.0) for every light if not given (same "normalized, uncalibrated
+    flash" convention as the single-light default below).
 
     Returns the raw Java ViewSet object, for use with Kintsugi3DPipeline.load_from_view_set().
     """
@@ -258,11 +281,25 @@ def build_view_set(project_root, cameras, *, supporting_files_directory=None,
 
         camera_builder.commitCurrentCameraPose()
 
-    # Light co-located with the camera (zero position), unit (not zero) intensity - treats every photo as
-    # lit by a normalized, uncalibrated flash, the same convention ViewSetReaderFromAgisoftXML uses for
-    # sources with no calibrated light data. A zero intensity here divides every texel's reflectance by
-    # zero in average.frag (rgb / attenuatedIntensity), poisoning it to Infinity/NaN.
-    builder.addLight(Vector3.ZERO, Vector3(1.0))
+    # Each light is a camera-local rig offset (ViewSet.addLight()/the GPU upload store the position raw,
+    # un-transformed, indexed only by light index - the per-view combination with that view's own camera
+    # pose happens entirely in colorappearance.glsl's getLightVector()); Vector3.ZERO means "co-located with
+    # the camera" (the original single-flash default below), a non-zero offset follows the camera rigidly,
+    # which is exactly the triple-flash rig's physical setup (flashes bolted to the camera arm). Unit (not
+    # zero) intensity - treats every photo as lit by normalized, uncalibrated flashes, the same convention
+    # ViewSetReaderFromAgisoftXML uses for sources with no calibrated light data. A zero intensity here
+    # divides every texel's reflectance by zero in average.frag (rgb / attenuatedIntensity), poisoning it
+    # to Infinity/NaN.
+    resolved_light_offsets = light_offsets if light_offsets is not None else [(0.0, 0.0, 0.0)]
+    resolved_light_intensities = (
+        light_intensities if light_intensities is not None else [(1.0, 1.0, 1.0)] * len(resolved_light_offsets))
+    if len(resolved_light_offsets) != len(resolved_light_intensities):
+        raise ValueError(
+            f"light_offsets ({len(resolved_light_offsets)}) and light_intensities "
+            f"({len(resolved_light_intensities)}) must have the same length")
+
+    for offset, intensity in zip(resolved_light_offsets, resolved_light_intensities):
+        builder.addLight(Vector3(*(float(v) for v in offset)), Vector3(*(float(v) for v in intensity)))
 
     if full_res_image_directory is not None:
         builder.setFullResImageDirectory(_jfile(full_res_image_directory))

@@ -78,6 +78,11 @@ public final class DefaultSettings
         settingsModel.createBooleanSetting("infiniteLightSources", false);
         settingsModel.createBooleanSetting("flatfieldCorrected", false);
 
+        // Multi-light settings: number of lights illuminating each view simultaneously (e.g. a triple-flash
+        // rig with a center and two side flashes firing in one exposure). See LIGHTS_PER_VIEW in
+        // colorappearance.glsl -- flatfieldCorrected is not supported in combination with lightsPerView > 1.
+        settingsModel.createNumericSetting("lightsPerView", 1);
+
         // Specular fit settings
         settingsModel.createNumericSetting("textureSize", 2048);
         settingsModel.createNumericSetting("basisCount", 8);

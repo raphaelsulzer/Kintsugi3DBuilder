@@ -21,6 +21,7 @@ import kintsugi3d.builder.resources.project.*;
 import kintsugi3d.builder.resources.project.specular.TextureResources;
 import kintsugi3d.builder.resources.project.stream.GraphicsStreamResource;
 import kintsugi3d.gl.builders.ProgramBuilder;
+import kintsugi3d.gl.builders.framebuffer.FramebufferObjectBuilder;
 import kintsugi3d.gl.core.*;
 import kintsugi3d.gl.material.ReadonlyImportedMaterial;
 import kintsugi3d.gl.material.ReadonlyMaterialTextureMap;
@@ -566,14 +567,22 @@ public class SpecularFitProcess
     {
         SpecularFitProgramFactory<ContextType> programFactory = getProgramFactory();
 
+        // One shared observed-radiance/visibility attachment, plus one halfway/geomRatio/weight/validity
+        // attachment PER LIGHT, plus one incidentRadiance attachment PER LIGHT (extractReflectance.frag's
+        // halfway_geom_weight[LIGHTS_PER_VIEW] and incidentRadiance[LIGHTS_PER_VIEW] array outputs each
+        // consume LIGHTS_PER_VIEW consecutive color attachments/locations).
+        int lightsPerView = resources.getViewSet().getProjectSettings().getInt("lightsPerView");
+        FramebufferObjectBuilder<ContextType> reflectanceFramebufferBuilder =
+            resources.getContext().buildFramebufferObject(resolution.width, resolution.height)
+                .addColorAttachment(ColorFormat.RGBA32F)
+                .addColorAttachments(ColorFormat.RGBA32F, 2 * lightsPerView);
+
         try
         (
             // Reflectance stream: includes a shader program and a framebuffer object for extracting reflectance data from images.
             GraphicsStreamResource<ContextType> stream = resources.streamFactory().streamAsResource(
                 getReflectanceProgramBuilder(resources, programFactory),
-                resources.getContext().buildFramebufferObject(resolution.width, resolution.height)
-                    .addColorAttachment(ColorFormat.RGBA32F)
-                    .addColorAttachment(ColorFormat.RGBA32F))
+                reflectanceFramebufferBuilder)
         )
         {
             optimizationMethod.optimize(stream, monitor);
