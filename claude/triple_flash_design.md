@@ -156,23 +156,68 @@ understood.
 - `shaders/specularfit/normalError.glsl` -- Tier 2, `calculateError()` radiance-space,
   used by `estimateNormals.frag`'s LM step-acceptance test.
 
-## Not yet changed
+## Status: implementation complete, verified end-to-end
 
-- `shaders/specularfit/extractReflectance.frag` (Tier 3 -- awaiting plumbing investigation).
-- `src/kintsugi3d/optimization/function/` -- no new 2D cross-light accumulator class yet.
-- `src/kintsugi3d/builder/fit/decomposition/SpecularWeightModel.java` -- still divides by
-  one light implicitly via its `ReflectanceData` samples (pre-divided reflectance); needs
-  raw-radiance samples + summed-3-light basis lookups once Tier 3 lands.
-- `python/kintsugi3d/pipeline.py`'s `build_view_set()` -- still hardcodes one light
-  (`.setCurrentLightIndex(0)`, single `builder.addLight(...)` call). Needs 3 lights added
-  per view (center + left ~1m + right ~1m -- rig geometry given by the user, but the
-  reconstructed model is not yet metric-scaled; may need to derive scale from the mm ruler
-  visible in `arago/ImagesTripleColorRamp` if the unscaled model turns out to matter for
-  correct inverse-square attenuation).
-- `calibrateLightIntensities()`/`initializeLightIntensities()`/`updateLightCalibration()`
-  (Java, `GraphicsResourcesBase`/`GraphicsResourcesImageSpace`) -- still broadcast one
-  shared scalar; need per-light intensity/distance handling.
-- Maven rebuild (`mvn package`) to produce the shaded jar reflecting all of the above.
-- `threedo-triple-flash` worktree's `threedo/kintsugi.py` -- not yet wired to call with
-  `sfm_images` and the new 3-light config.
-- The actual run against `/data/shared/mug_020926_sfm_ImagesFlashTriple/sfm_images`.
+All of Tier 1, Tier 2, and Tier 3 are implemented:
+
+- `shaders/specularfit/extractReflectance.frag` -- restructured to emit raw (undivided)
+  observed radiance once per pixel, plus one halfway/geomRatio/weight/validity sample AND
+  one incidentRadiance sample per light slot, packed into a single array output at one
+  fixed `layout(location=1)` (GLSL 330's `layout(location=...)` only accepts a bare integer
+  literal, not a `1 + LIGHTS_PER_VIEW`-style constant expression -- that needs GLSL 4.40 /
+  ARB_enhanced_layouts -- caught by an actual `ShaderCompileFailureException` on the first
+  end-to-end run and fixed by packing both arrays into one).
+- `src/kintsugi3d/optimization/function/CrossLightAccumulator.java` -- the new 2D
+  cross-light accumulator (see its Javadoc for the full derivation: builds small dense
+  histograms over the bounded basis-resolution domain rather than a per-sample
+  O(functionCount^2) brute force, reduced via a couple of small matrix products).
+- `src/kintsugi3d/builder/fit/decomposition/ReflectanceMatrixBuilder.java` -- calls the
+  existing single-light `MatrixBuilder` once per light slot (diagonal terms + RHS) and
+  `CrossLightAccumulator` once per unordered light-slot pair (cross terms), all
+  accumulating into the same shared `MatrixSystem`.
+- `src/kintsugi3d/builder/fit/decomposition/SpecularWeightModel.java` -- divides by the
+  COMBINED incident radiance from all valid lights (not raw radiance directly -- a naive
+  radiance-space reformulation would silently change the implicit sample weighting even for
+  the single-light case), predicting the matching irradiance-weighted-average reflectance.
+- `src/kintsugi3d/builder/fit/ReflectanceData.java`, `SpecularFitOptimizable.java`,
+  `SpecularFitProcess.java` -- per-slot data plumbing and the `1 + 2*lightsPerView`
+  framebuffer attachment count.
+- New `lightsPerView` project setting (default 1, `DefaultSettings.java`), wired into
+  `ViewSet.getShaderProgramBuilder`'s `LIGHTS_PER_VIEW` shader define.
+- `calibrateLightIntensities()`/`initializeLightIntensities()` (Java,
+  `GraphicsResourcesImageSpace`/`GraphicsResourcesBase`) -- checked, and these already loop
+  over `getViewSet().getLightCount()` (not hardcoded to light 0), broadcasting the same
+  calibrated intensity to every light -- correct as-is for identical/similar rig-mounted
+  flashes, no change needed.
+- `python/kintsugi3d/pipeline.py`'s `build_view_set()` -- generalized to accept a list of
+  `light_offsets`/`light_intensities` (camera-rig-relative offsets, confirmed against
+  `ViewSet.addLight()`'s raw/un-transformed storage and `colorappearance.glsl`'s
+  `getLightVector()` -- a light's world position for view v is
+  `cameraWorldPos(v) + cameraRotation(v) * offset`, i.e. it rigidly follows the camera).
+- `threedo-triple-flash` worktree's `threedo/kintsugi.py` and `threedo/alicevision_sfm.py`
+  -- `run_kintsugi3d()`/`run_pipeline()` take `light_offsets_meters` and convert to scene
+  units via the new `estimate_scale_from_arago_poses()` (derives scene-units-per-meter from
+  the ratio of RMS camera-to-centroid distance between the SfM reconstruction and the
+  Arago rig's own metric "Image poses.json" export -- no per-photo correspondence needed,
+  since the renamed/re-encoded `sfm_images` no longer hash- or EXIF-match the original
+  `arago/ImagesFlashTriple/RIG*.JPG` files needed for that; both pose sets sample the same
+  physical capture sphere instead). Three independent scale estimators (mean/median/RMS
+  distance ratio) agreed to ~1% for this dataset (~0.51-0.52 m per SfM unit; ~0.51m
+  camera-to-centroid distance, physically plausible for this tabletop rig).
+
+**Verified**: a full Maven build (JDK 11 -- this project's `pom.xml` targets Java 11,
+incompatible with the newer JDKs otherwise available in this environment; a portable
+Temurin JDK 11 + Maven 3.9.16 were downloaded into a job-scratch directory for the build,
+not installed system-wide) produces `target/Kintsugi3DBuilder-1.5.3-shaded.jar` with no
+compile errors. A full end-to-end headless run against
+`/data/shared/mug_020926_sfm_ImagesFlashTriple/sfm_images` with 3 lights (center + left +
+right, ~1m each) at a 256x256 smoke-test resolution completed without errors: the specular
+fit converges (basis clustering, normal/diffuse optimization, error calculation all ran
+through their normal iteration counts), and the exported textures (albedo, diffuse, normal,
+specular, roughness, ORM, per-material weight maps) are non-degenerate (sensible
+mean/std/coverage, not flat or all-zero).
+
+**Not yet done**: a full-resolution (2048x2048 or similar) production run, and any
+qualitative/quantitative comparison against the single-light (center-only) fit to see
+whether the 3-light BRDF actually improves material-model accuracy for this object -- the
+whole point of the exercise. See runtime.csv in each run's output directory for timing.
