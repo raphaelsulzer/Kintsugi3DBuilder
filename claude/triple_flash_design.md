@@ -128,16 +128,10 @@ SAME single observed radiance value. Deriving the correct normal-equations contr
   approximation that would have reused the existing 1D code unchanged) and chose the full
   rederivation.
 
-**Status as of this writing: Tier 1 and Tier 2 are fully implemented (see file list below).
-Tier 3 design/implementation has not yet started** -- an Explore sub-agent has been
-dispatched to map the exact Java-side plumbing (the `ReflectanceData` interface and its
-implementations, where `extractReflectance.frag`'s render targets get read back to CPU
-memory, and the exact call site that builds `MatrixBuilderSample` streams and invokes
-`MatrixBuilder.build()`) before the 2D accumulator and the `extractReflectance.frag`
-restructuring (to emit 3 domain positions instead of 1, and raw undivided radiance) can be
-implemented correctly. `SpecularWeightModel.java`'s `getSamples()`/`getBasisFunctions()`
-also still need updating to raw-radiance/summed-3-light form once Tier 3's data flow is
-understood.
+(Historical note: at one point during this work, Tier 3 looked like it might need only an
+EM-style approximation reusing the existing 1D sweep unchanged. The user was asked and
+explicitly chose the full mathematical rederivation described above instead. That
+rederivation is now complete -- see "Status" below.)
 
 ## Files changed so far
 
@@ -205,19 +199,159 @@ All of Tier 1, Tier 2, and Tier 3 are implemented:
   distance ratio) agreed to ~1% for this dataset (~0.51-0.52 m per SfM unit; ~0.51m
   camera-to-centroid distance, physically plausible for this tabletop rig).
 
-**Verified**: a full Maven build (JDK 11 -- this project's `pom.xml` targets Java 11,
-incompatible with the newer JDKs otherwise available in this environment; a portable
-Temurin JDK 11 + Maven 3.9.16 were downloaded into a job-scratch directory for the build,
-not installed system-wide) produces `target/Kintsugi3DBuilder-1.5.3-shaded.jar` with no
-compile errors. A full end-to-end headless run against
-`/data/shared/mug_020926_sfm_ImagesFlashTriple/sfm_images` with 3 lights (center + left +
-right, ~1m each) at a 256x256 smoke-test resolution completed without errors: the specular
-fit converges (basis clustering, normal/diffuse optimization, error calculation all ran
-through their normal iteration counts), and the exported textures (albedo, diffuse, normal,
-specular, roughness, ORM, per-material weight maps) are non-degenerate (sensible
-mean/std/coverage, not flat or all-zero).
+**Verified, twice**: a 256x256 smoke test, then a real 1024x1024 run -- both completed
+end-to-end against `/data/shared/mug_020926_sfm_ImagesFlashTriple/sfm_images` with 3 lights
+(center + left + right, ~1m each, per the runs below), no errors, non-degenerate exported
+textures. See "Current state of the repo" and "Verified run results" below for exact
+commits/commands/output paths, and "Next steps" for what's genuinely still open (a
+single-light-vs-3-light comparison -- the actual point of the exercise -- has NOT been done
+yet).
 
-**Not yet done**: a full-resolution (2048x2048 or similar) production run, and any
-qualitative/quantitative comparison against the single-light (center-only) fit to see
-whether the 3-light BRDF actually improves material-model accuracy for this object -- the
-whole point of the exercise. See runtime.csv in each run's output directory for timing.
+## Current state of the repo (read this first if resuming from a fresh session)
+
+Branch `triple-flash` (off `dev`), 4 commits ahead of `dev` as of this writing:
+
+```
+c7a5c26b Update triple-flash design doc: implementation complete, verified end-to-end
+21998fed Fix GLSL330 layout(location) constant-expression error in extractReflectance.frag
+a01d1b92 Implement full 3-light basis-shape extraction (Tier 3) and weight fitting
+78db1645 Add multi-light (LIGHTS_PER_VIEW) support to specular-fit shaders
+```
+
+Working tree is clean (`git status`) as of this doc's last update. The companion worktree
+`threedo-triple-flash` (branch `triple-flash` off `main`) has the Python-side wiring -- see
+its own `claude/triple_flash_kintsugi_notes.md` for full details; short version: it calls
+into this repo's Python bindings (`python/kintsugi3d/pipeline.py`) via `PYTHONPATH`, not via
+the installed editable package (which points at the unrelated `/home/sulzer0000/code/
+Kintsugi3DBuilder` checkout -- see this repo's own top-level `CLAUDE.md` "Critical gotcha"
+section, which applies to `kintsugi3d` the same as it does to `threedo`).
+
+### Reproducing the build toolchain
+
+This machine has **no JDK 11** and **no Maven** installed anywhere persistent (checked:
+`/usr/lib/jvm/` only has JRE-only Java 8 and Java 21 packages -- no `javac` in either; the
+only `javac` found anywhere was bundled inside a VS Code extension, itself JDK 21). This
+project's `pom.xml` targets Java 11 specifically (`<source>11</source><target>11</target>`)
+and fails to compile under JDK 21 (`ImageHelper.java` uses the internal
+`sun.java2d.cmm.ColorTransform` API, whose shape changed between JDK 11 and 21 in a way
+that breaks compilation, not just a deprecation warning). Both a JDK 11 and Maven were
+downloaded as portable/relocatable tarballs into this session's job-scratch directory
+(`$CLAUDE_JOB_DIR/tmp/`, cleaned up when the job is deleted -- so this download step will
+need to be repeated in a fresh session). Commands used (adjust the destination directory as
+needed for a new session):
+
+```bash
+# JDK 11 (Eclipse Temurin, portable tarball)
+mkdir -p /tmp/jdk11 && cd /tmp/jdk11
+curl -sSL -o jdk11.tar.gz "https://api.adoptium.net/v3/binary/latest/11/ga/linux/x64/jdk/hotspot/normal/eclipse?project=jdk"
+tar xzf jdk11.tar.gz   # extracts to e.g. jdk-11.0.32.1+1/
+
+# Maven 3.9.16 (portable tarball; check https://downloads.apache.org/maven/maven-3/ for the current version if this one 404s)
+mkdir -p /tmp/maven-install && cd /tmp/maven-install
+curl -sSL -o maven.tar.gz https://downloads.apache.org/maven/maven-3/3.9.16/binaries/apache-maven-3.9.16-bin.tar.gz
+tar xzf maven.tar.gz   # extracts to apache-maven-3.9.16/
+
+export JAVA_HOME=/tmp/jdk11/jdk-11.0.32.1+1   # match the actual extracted dir name
+export PATH=$JAVA_HOME/bin:/tmp/maven-install/apache-maven-3.9.16/bin:$PATH
+```
+
+`~/.m2/repository` already has ~39MB of cached dependencies from a prior build (not this
+session's -- predates it), but NOT everything `mvn compile`/`package` needs -- the first
+build must run online (not `-o`/offline) to fetch the rest; after that, `~/.m2` should be
+complete enough to build offline. `mvn -v` should report `Java version: 11.x.x` if
+`JAVA_HOME`/`PATH` are set correctly.
+
+### Rebuilding the shaded jar
+
+```bash
+cd /home/sulzer0000/code/Kintsugi3DBuilder-triple-flash
+mvn -q -DskipTests package
+# -> target/Kintsugi3DBuilder-1.5.3-shaded.jar
+```
+
+Rebuild whenever any `.java` or `shaders/**` file in this repo changes (shaders are loaded
+from disk relative to the repo root at runtime per `SpecularFitProcess`'s `new File(...)`
+calls, i.e. NOT baked into the jar at a fixed path -- but the jar's `Main-Class` and its own
+compiled Java code obviously do need a rebuild after Java changes; rebuilding after every
+change, including shader-only ones, is simplest and was the practice used throughout this
+session).
+
+### Running
+
+Two ways to use the resulting jar:
+
+1. **Headless fit** (what was used to produce the verified runs below), via
+   `threedo-triple-flash`'s CLI:
+   ```bash
+   source /opt/miniconda3/etc/profile.d/conda.sh && conda activate pcm
+   export PYTHONPATH=/home/sulzer0000/code/threedo-triple-flash/src:/home/sulzer0000/code/Kintsugi3DBuilder-triple-flash/python
+   export JAVA_HOME=<path to the JDK 11 from above>   # only needed if launching a JVM directly; JPype picks up a JVM on its own, but keeping this set is harmless and consistent
+   python3 /home/sulzer0000/code/threedo-triple-flash/scripts/run_kintsugi3d.py \
+     --sfm_json /data/shared/mug_020926_sfm_ImagesFlashTriple/alicevision_sfm/sfm.json \
+     --alicevision_mvs_dir /data/shared/mug_020926_sfm_ImagesFlashTriple/alicevision_mvs \
+     --images_dir /data/shared/mug_020926_sfm_ImagesFlashTriple/sfm_images \
+     --masks_dir /data/shared/mug_020926_sfm_ImagesFlashTriple/masked_images \
+     --output_dir /data/shared/mug_020926_sfm_ImagesFlashTriple/kintsugi3d_triple_flash \
+     --texture_size 1024 \
+     --jar_path /home/sulzer0000/code/Kintsugi3DBuilder-triple-flash/target/Kintsugi3DBuilder-1.5.3-shaded.jar \
+     --light_offset_meters 0 0 0 --light_offset_meters 1 0 0 --light_offset_meters -1 0 0
+   ```
+   (`--light_offset_meters` was added to the CLI in this same session -- see
+   `threedo-triple-flash`'s own notes for its exact semantics. Add `--clear` to overwrite an
+   existing `--output_dir`.)
+
+2. **Interactive GUI**, to actually open a saved `project.vset` and look at/relight the
+   result (this jar's `Main-Class` is `kintsugi3d.builder.app.Kintsugi3DBuilder` -- it's the
+   full GUI app, not headless-only):
+   ```bash
+   java -jar /home/sulzer0000/code/Kintsugi3DBuilder-triple-flash/target/Kintsugi3DBuilder-1.5.3-shaded.jar
+   ```
+   then File -> Open Project -> the `project.vset` under whichever `--output_dir` was used.
+   **Must** be this jar (or a rebuild of this branch), not any stock/mainline Kintsugi3D
+   Builder install -- stock code has no idea what `LIGHTS_PER_VIEW`, the `lightsPerView`
+   project setting, or the multi-light math are, and would silently only use light index 0
+   (the center flash) for anything light-index-driven, even though the saved project has 3
+   registered lights. Needs a real display (X11/Wayland) -- was not attempted in this
+   session (headless-only environment at the time).
+
+### Verified run results
+
+Both runs below used the same 3 lights (center + ~1m right + ~1m left, converted to ~1.94
+scene units via `estimate_scale_from_arago_poses()` -- see the threedo-side notes) against
+`/data/shared/mug_020926_sfm_ImagesFlashTriple/sfm_images`, masked with
+`masked_images/*.png`, output into sibling directories of that dataset root:
+
+- `kintsugi3d_triple_flash_smoketest/` -- 256x256, ~14 min total (`load view set` 371s,
+  `specular fit` 424s, export ~2s). First successful run, used to catch the GLSL
+  layout-qualifier bug (see commit `21998fed`).
+- `kintsugi3d_triple_flash/` -- **1024x1024, the real result**, ~14 min total (`load view
+  set` 373s, `specular fit` 483s, export ~3s -- specular fit barely more expensive than the
+  256x256 smoke test, since most of its cost is per-view/per-sample image processing, not
+  per-output-texel). Each output dir has its own `runtime.csv` with these exact numbers, a
+  `project.vset`, `mesh/`, and `export/{gltf,textures}/`.
+
+Exported texture sanity-checked directly (not just "did it crash"): `export/textures/*.png`
+for the 1024x1024 run -- albedo/diffuse/normal/specular/roughness/ORM/8 material weight maps
+all have plausible non-degenerate mean/std and correct alpha coverage (not flat, not all
+transparent). Have NOT yet been opened in the GUI or otherwise visually inspected as
+rendered images by a human.
+
+## Next steps
+
+1. **The actual point of the exercise, not yet done**: compare this 3-light fit's material
+   accuracy against a single-light (center-flash-only) fit of the same object, to see
+   whether the 3-light BRDF sum genuinely improves anything. Candidate approaches:
+   `errorCalc`/`finalErrorCalc`'s own error texture (already exported, per-run, as
+   `error.png`) could be compared directly between a 1-light and 3-light run of the same
+   texture size; or render/relight comparisons in the GUI; or re-render each fit against
+   held-out photos not used in that fit and compute PSNR (mirroring the methodology used
+   elsewhere in this project's Gaussian-Splat work -- see the `threedo` repo's own
+   `claude/mug_020926_flashcenter_sfm_notes.md` for that precedent).
+2. Visually inspect the 1024x1024 result (GUI or the exported glTF/textures) -- nothing
+   past raw statistics has been checked by eye yet.
+3. If satisfied, consider a still-higher resolution (2048, matching this codebase's own
+   usual default) production run.
+4. `basisFunctions.csv` (also exported) has not been inspected at all -- could be a useful
+   sanity check of whether the 3 material basis functions the fit converged to look
+   physically sane (e.g. monotonically-decreasing microfacet-like shapes) or degenerate.
+5. Not attempted: opening the result in the actual interactive GUI (needs a display).
