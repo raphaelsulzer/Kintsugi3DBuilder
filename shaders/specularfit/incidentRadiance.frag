@@ -19,16 +19,26 @@ in vec3 fPosition;
 
 #define PI 3.1415926535897932384626433832795
 
-uniform vec3 reconstructionLightPos;
-uniform vec3 reconstructionLightIntensity;
+uniform vec3 reconstructionLightPos[LIGHTS_PER_VIEW];
+uniform vec3 reconstructionLightIntensity[LIGHTS_PER_VIEW];
 
 layout(location = 0) out vec4 fragColor;
 
 void main()
 {
-    vec3 lightDisplacement = reconstructionLightPos - getPosition();
+    // Sum of every light's incident radiance -- paired with basisModel.frag's irradiance-weighted-average
+    // reflectance output (see its own comment). Reduces exactly to the original single-light formula when
+    // LIGHTS_PER_VIEW == 1.
+    vec3 totalIrradiance = vec3(0.0);
 
-    // View set's light intensity is technically radiance / pi, hence multiplication by pi
+    for (int slot = 0; slot < LIGHTS_PER_VIEW; slot++)
+    {
+        vec3 lightDisplacement = reconstructionLightPos[slot] - getPosition();
+
+        // View set's light intensity is technically radiance / pi, hence multiplication by pi
+        totalIrradiance += reconstructionLightIntensity[slot] * PI / dot(lightDisplacement, lightDisplacement);
+    }
+
     // Gamma correction intentionally omitted for error calculation.
-    fragColor = vec4(reconstructionLightIntensity * PI / dot(lightDisplacement, lightDisplacement), 1.0);
+    fragColor = vec4(totalIrradiance, 1.0);
 }

@@ -153,6 +153,25 @@ public class SpecularFitProcess
         }
     }
 
+    /**
+     * Convenience wrapper around {@link #reconstructAll} for callers (e.g. Python via JPype) where
+     * implementing a {@link BiConsumer} functional interface is inconvenient: renders every view's fitted
+     * material back into image space under its own actual captured lighting and compares against the real
+     * photo, returning one row per view as {@code [viewIndex, sampleCount, encodedGroundTruthRMSE,
+     * normalizedSRGB_RMSE, normalizedLinearRMSE]}. All three RMSE values are in [0, 1]-normalized units
+     * (see {@link ColorAppearanceRMSE}'s own docs on what each represents); a standard PSNR can be computed
+     * from any of them as {@code 20 * log10(1.0 / rmse)}.
+     */
+    public <ContextType extends Context<ContextType>> double[][] reconstructAllToArray(GraphicsResources<ContextType> resources)
+        throws IOException
+    {
+        java.util.List<double[]> rows = new java.util.ArrayList<>();
+        reconstructAll(resources, (view, rmse) -> rows.add(new double[] {
+            view.getIndex(), rmse.getSampleCount(), rmse.getEncodedGroundTruth(), rmse.getNormalizedSRGB(), rmse.getNormalizedLinear()
+        }));
+        return rows.toArray(new double[0][]);
+    }
+
     public <ContextType extends Context<ContextType>> SpecularFitOptimizable<ContextType> optimizeFit(
         GraphicsResources<ContextType> resources, ProgressMonitor monitor)
         throws IOException, UserCancellationException
