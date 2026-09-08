@@ -25,6 +25,7 @@ __all__ = [
     "build_view_set",
     "new_specular_fit_settings",
     "new_export_settings",
+    "new_usdz_export_settings",
 ]
 
 
@@ -121,6 +122,26 @@ class Kintsugi3DPipeline:
         """settings: a Java ExportSettings object (see new_export_settings()), or None to
         use the defaults."""
         self._java.exportGltf(_jfile(output_directory), settings if settings is not None else new_export_settings())
+
+    def export_usdz(self, output_directory, settings=None, *, metallic=False):
+        """Exports the currently loaded/fit project to a self-contained output_directory/model.usdz,
+        via Kintsugi 3D Builder's own USDZ exporter (kintsugi3d.builder.io.usdz) - requires a real
+        usdz-exporter-*-linux/macos/windows.exe binary (from
+        https://github.com/PoctorDepper/usdz-exporter/releases) present in this repo's own bin/
+        directory (ApplicationFolders.getAdditionalBinDirectory(), resolved relative to the JVM's
+        working directory - start_jvm() already os.chdir()s to this repo's root, so bin/ here is the
+        right place regardless of the calling script's own cwd).
+
+        settings: a Java ExportSettings object already configured with a USDZ exporter factory (see
+        new_usdz_export_settings()), or None to build one from `metallic` for you.
+
+        metallic: ignored if settings is given. Selects USDZMetallicExporterFactory (albedo/ORM) over
+        the default USDZSpecularExporterFactory (diffuse/specular/roughness) - mirrors the GUI's
+        ExportType.USDZ_METALLIC vs. ExportType.USDZ_SPECULAR.
+        """
+        self._java.exportUsdz(
+            _jfile(output_directory),
+            settings if settings is not None else new_usdz_export_settings(metallic=metallic))
 
     def export_textures(self, material_directory):
         self._java.exportTextures(_jfile(material_directory))
@@ -289,3 +310,30 @@ def new_export_settings():
     """Returns a real Java ExportSettings object with its normal defaults, for callers
     who need to configure it beyond export_gltf()'s defaults."""
     return jpype.JClass("kintsugi3d.builder.fit.settings.ExportSettings")()
+
+
+def new_usdz_export_settings(*, metallic=False):
+    """Returns a Java ExportSettings object configured for USDZ export (see
+    Kintsugi3DPipeline.export_usdz()) - a plain new_export_settings() would keep the GLTF-flavored
+    default exporter factory, which export_usdz() explicitly requires callers to override.
+
+    Also forces shouldSaveTextures (and shouldAppendModelNameToTextures) on, mirroring
+    ExportTexturesRequest.getExportSettingsFromProject() - the GUI's own export path always turns
+    these on regardless of export type. This isn't just a naming nicety: ProjectRenderingEngine.saveGLTF
+    only calls the material exporter's saveTextures()/postExport() hooks (where the USDZ exporters
+    actually stage textures and invoke the external usdz-exporter binary that turns the plain glTF
+    into a real USDZ archive) when shouldSaveTextures() is true - with it left at ExportSettings'
+    default of false, export_usdz() would silently write a bare glTF binary named "model.usdz"
+    instead of an actual USDZ.
+
+    metallic: USDZMetallicExporterFactory (albedo/ORM) instead of the default
+    USDZSpecularExporterFactory (diffuse/specular/roughness) - see kintsugi3d.builder.io.ExportType's
+    USDZ_METALLIC vs. USDZ_SPECULAR, the same choice the GUI's export dialog offers.
+    """
+    settings = new_export_settings()
+    settings.setShouldSaveTextures(True)
+    settings.setShouldAppendModelNameToTextures(True)
+    factory_class_name = "USDZMetallicExporterFactory" if metallic else "USDZSpecularExporterFactory"
+    factory = jpype.JClass(f"kintsugi3d.builder.io.usdz.{factory_class_name}").getInstance()
+    settings.setExporterFactory(factory)
+    return settings

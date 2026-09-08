@@ -91,6 +91,20 @@ public final class Rendering
         return requestQueue;
     }
 
+    /**
+     * Lets a non-GUI entry point (HeadlessPipeline) supply its own request queue, so that
+     * Rendering.runLater(...) - used internally by e.g. ModelExporter.exportWithTextures() for its
+     * texture-export step - has somewhere to enqueue work instead of NullPointerException-ing on the
+     * normal GUI path's requestQueue, which is only ever assigned inside runProgram()'s full JavaFX/GLFW
+     * event loop. Headless callers are expected to pump the returned queue themselves (see
+     * GraphicsRequestManager.executeQueue()) immediately after triggering work that enqueues onto it,
+     * since nothing else polls it outside that event loop.
+     */
+    public static void setRequestQueue(GraphicsRequestManager<OpenGLContext> queue)
+    {
+        requestQueue = queue;
+    }
+
     public static void runProgram(String... args) throws InitializationException
     {
         runProgram(null, args);

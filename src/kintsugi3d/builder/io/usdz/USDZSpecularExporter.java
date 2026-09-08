@@ -14,7 +14,6 @@ package kintsugi3d.builder.io.usdz;
 import de.javagl.jgltf.impl.v2.TextureInfo;
 import kintsugi3d.builder.app.ApplicationFolders;
 import kintsugi3d.builder.app.OperatingSystem;
-import kintsugi3d.builder.core.Global;
 import kintsugi3d.builder.core.StandardTexture;
 import kintsugi3d.builder.io.gltf.MaterialExporter;
 import kintsugi3d.builder.io.gltf.StandardTextureExport;
@@ -25,6 +24,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -159,7 +159,17 @@ public class USDZSpecularExporter extends MaterialExporter
     public void saveTextures(File outputDirectory)
     {
         outputPath = outputDirectory;
-        tempPath = new File(Global.state().getIOModel().getLoadedViewSet().getSupportingFilesDirectory(), "temp");
+        // A plain system temp dir rather than the loaded project's supporting-files directory
+        // (via Global.state(), a JavaFX/GUI-only singleton) - this exporter also needs to work
+        // from HeadlessPipeline, which deliberately never populates that GUI state.
+        try
+        {
+            tempPath = Files.createTempDirectory("kintsugi3d-usdz-export").toFile();
+        }
+        catch (IOException e)
+        {
+            throw new UncheckedIOException(e);
+        }
         super.saveTextures(tempPath);
     }
 }

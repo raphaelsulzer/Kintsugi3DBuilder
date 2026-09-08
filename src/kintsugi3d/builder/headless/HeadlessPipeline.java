@@ -12,7 +12,9 @@
 package kintsugi3d.builder.headless;
 
 import kintsugi3d.builder.app.ApplicationFolders;
+import kintsugi3d.builder.app.Rendering;
 import kintsugi3d.builder.core.ConsoleProgressMonitor;
+import kintsugi3d.builder.core.GraphicsRequestManager;
 import kintsugi3d.builder.core.RenderableInstance;
 import kintsugi3d.builder.core.SimpleLoadOptionsModel;
 import kintsugi3d.builder.core.UserCancellationException;
@@ -66,6 +68,13 @@ public final class HeadlessPipeline implements AutoCloseable
     {
         this.window = window;
         this.context = window.getContext();
+
+        // Some export paths (e.g. ModelExporter.exportWithTextures(), used by exportUsdz()) enqueue their
+        // texture-export step via Rendering.runLater() rather than running it inline - on the GUI path that
+        // queue is serviced every frame by the render loop's refresh(), but headless has no such loop, so
+        // exportGltf()/exportUsdz() pump this queue synchronously themselves right after triggering work
+        // that might enqueue onto it (see their own comments).
+        Rendering.setRequestQueue(new GraphicsRequestManager<>(context));
 
         // The GUI's own production render path (Rendering.java) enables depth testing once at
         // startup, as a side effect of setting up its live 3D view - every occlusion/shadow
@@ -256,6 +265,39 @@ public final class HeadlessPipeline implements AutoCloseable
     public void exportGltf(File outputDirectory, ExportSettings settings)
     {
         renderable.saveGLTF(outputDirectory, settings);
+
+        // No-op if settings.shouldSaveTextures() is false (the headless-friendly default this repo's own
+        // callers use, exporting textures separately via exportTextures() instead) - see the constructor's
+        // comment and exportUsdz()'s, which relies on this same pump for a case where textures are required.
+        Rendering.getRequestQueue().executeQueue();
+    }
+
+    /**
+     * Exports the currently loaded/fit project to USDZ instead of glTF. settings.getExporterFactory()
+     * must be set to a USDZ exporter factory (USDZSpecularExporterFactory or
+     * USDZMetallicExporterFactory, see kintsugi3d.builder.io.ExportType) - the default
+     * Kintsugi3DViewerExporterFactory a bare new ExportSettings() carries would produce a glTF-flavored
+     * material export written under a ".usdz" filename, not an actual USDZ archive. settings must also
+     * have shouldSaveTextures() true (see python binding new_usdz_export_settings()) - the USDZ
+     * exporters' actual USDZ-archive conversion only happens as part of the material/texture export
+     * step, not the plain geometry export.
+     *
+     * The underlying RenderableInstance.saveGLTF(File, String, ExportSettings, Runnable) call is
+     * generic despite its name: it's driven entirely by ExportSettings.getExporterFactory(), the same
+     * mechanism the GUI's own ExportModelController/ExportType combo box uses to switch between glTF
+     * and USDZ export.
+     */
+    public void exportUsdz(File outputDirectory, ExportSettings settings)
+    {
+        renderable.saveGLTF(outputDirectory, "model.usdz", settings, null);
+
+        // With shouldSaveTextures() true, saveGLTF() above enqueues the actual texture/USDZ-conversion
+        // step via Rendering.runLater() instead of running it inline (see ModelExporter.exportWithTextures())
+        // - on the GUI path that's serviced every frame by the render loop; headless has no such loop, so
+        // without this the enqueued work would silently never run and outputDirectory/model.usdz would end
+        // up being just the plain glTF-binary geometry saveGLTF() itself already wrote synchronously above,
+        // not a real USDZ.
+        Rendering.getRequestQueue().executeQueue();
     }
 
     public void exportTextures(File materialDirectory) throws IOException
