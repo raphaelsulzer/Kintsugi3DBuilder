@@ -19,15 +19,23 @@ import kintsugi3d.builder.core.RenderableInstance;
 import kintsugi3d.builder.core.SimpleLoadOptionsModel;
 import kintsugi3d.builder.core.UserCancellationException;
 import kintsugi3d.builder.core.ViewSet;
+import kintsugi3d.builder.core.metrics.ColorAppearanceRMSE;
+import kintsugi3d.builder.fit.FinalReconstruction;
+import kintsugi3d.builder.fit.ReconstructionShaders;
 import kintsugi3d.builder.fit.SpecularFitProcess;
+import kintsugi3d.builder.fit.SpecularFitProgramFactory;
+import kintsugi3d.builder.fit.settings.ReconstructionSettings;
 import kintsugi3d.builder.fit.settings.ExportSettings;
 import kintsugi3d.builder.fit.settings.SpecularFitSettings;
+import kintsugi3d.builder.io.ViewSetDirectories;
 import kintsugi3d.builder.io.ViewSetLoadOptions;
+import kintsugi3d.builder.io.ViewSetReaderFromVSET;
 import kintsugi3d.builder.io.ViewSetWriterToVSET;
 import kintsugi3d.builder.io.metashape.MetashapeModel;
 import kintsugi3d.builder.resources.project.GraphicsResourcesImageSpace;
 import kintsugi3d.builder.resources.project.MeshImportException;
 import kintsugi3d.builder.resources.project.MissingImagesException;
+import kintsugi3d.builder.resources.project.specular.TextureResources;
 import kintsugi3d.builder.rendering.ProjectRenderingEngine;
 import kintsugi3d.gl.glfw.CanvasWindow;
 import kintsugi3d.gl.interactive.InitializationException;
@@ -40,6 +48,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 /**
@@ -298,6 +308,65 @@ public final class HeadlessPipeline implements AutoCloseable
         // up being just the plain glTF-binary geometry saveGLTF() itself already wrote synchronously above,
         // not a real USDZ.
         Rendering.getRequestQueue().executeQueue();
+    }
+
+
+    /**
+     * Renders the currently fit project from a *different* set of cameras and lights, and scores each
+     * render against that set's own photographs.
+     *
+     * This is the piece that lets a Kintsugi fit be evaluated the way a novel-view/novel-light method is:
+     * fit on one set of images, then predict images the fit never saw. Kintsugi already had every part of
+     * it internally - {@link FinalReconstruction} re-renders a view set through the fitted basis model,
+     * and {@link ReconstructionSettings#setReconstructionViewSet} was already able to point that at a view
+     * set other than the one fitted - but nothing exposed the combination outside the fit request, so the
+     * only way to get images out headlessly was glTF/USDZ/texture export. Those carry a PBR approximation
+     * of the basis fit rather than the fit itself, which is not the thing one wants to measure.
+     *
+     * The reconstruction view set is an ordinary .vset file, so arbitrary camera/light combinations are
+     * expressed the usual way: one {@code l} entry per light (with {@code z infiniteLightSources true} for
+     * distant sources) and one {@code v} row per (pose, intrinsics, light, image) combination. Its images
+     * are read as ground truth, so the returned RMSE is against real photographs.
+     *
+     * Renders are written to {@code outputDirectory/basis/}, and the corresponding ground truth to
+     * {@code outputDirectory/ground-truth/}, both named by view index.
+     *
+     * @param reconstructionVsetFile a .vset naming the cameras, lights and ground-truth images to predict
+     * @param outputDirectory        where renders and ground truth are written
+     * @param settings               the settings the fit was run with; supplies the basis settings and
+     *                               texture resolution the reconstruction shaders need
+     * @return one RMSE record per view, in view-set order
+     */
+    public List<Map<String, ColorAppearanceRMSE>> reconstructFromViewSet(
+        File reconstructionVsetFile, File outputDirectory, SpecularFitSettings settings) throws Exception
+    {
+        ViewSetDirectories directories = new ViewSetDirectories();
+        directories.projectRoot = reconstructionVsetFile.getParentFile();
+        directories.supportingFilesDirectory = reconstructionVsetFile.getParentFile();
+        ViewSet reconstructionViewSet =
+            ViewSetReaderFromVSET.getInstance().readFromFile(reconstructionVsetFile, directories).finish();
+
+        ReconstructionSettings reconstructionSettings = new ReconstructionSettings();
+        reconstructionSettings.setReconstructionViewSet(reconstructionViewSet);
+        // Every view, not the single key view the fit's own validation pass settles for.
+        reconstructionSettings.setReconstructAll(true);
+
+        outputDirectory.mkdirs();
+
+        TextureResources<OpenGLContext> specularFit = getResources().getTextureResources();
+        SpecularFitProgramFactory<OpenGLContext> programFactory =
+            new SpecularFitProgramFactory<>(settings.getSpecularBasisSettings());
+
+        return new FinalReconstruction<>(getResources(), settings.getTextureResolution(), reconstructionSettings)
+            // Save what the RMSE actually compares, not the raw linear framebuffer: the latter
+            // quantises to about one 8-bit level on a real capture and cannot be scored.
+            .setSaveEncoded(true)
+            .reconstruct(specularFit,
+                Map.of("basis", ReconstructionShaders.getBasisModelReconstructionProgramBuilder(
+                    getResources(), specularFit, programFactory)),
+                ReconstructionShaders.getIncidentRadianceProgramBuilder(getResources(), programFactory),
+                outputDirectory,
+                new File(outputDirectory, "ground-truth"));
     }
 
     public void exportTextures(File materialDirectory) throws IOException

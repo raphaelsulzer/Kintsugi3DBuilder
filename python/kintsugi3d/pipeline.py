@@ -143,6 +143,28 @@ class Kintsugi3DPipeline:
             _jfile(output_directory),
             settings if settings is not None else new_usdz_export_settings(metallic=metallic))
 
+    def reconstruct_from_view_set(self, reconstruction_vset_file, output_directory, settings):
+        """Renders the fitted project from a *different* set of cameras and lights and scores each
+        render against that set's own photographs - so a Kintsugi fit can be evaluated the way a
+        novel-view/novel-light method is: fit on one set of images, predict images it never saw.
+
+        Prefer this over rendering the glTF/USDZ export when the question is how good the *fit* is.
+        Those exports carry a PBR approximation of the basis model, not the basis model itself.
+
+        `reconstruction_vset_file` is an ordinary .vset. Arbitrary camera/light combinations are
+        expressed the usual way - one `l` line per light, `z infiniteLightSources true` for distant
+        sources, and one `v <poseIdx> <intrinsicsIdx> <lightIdx> <image>` row per combination. Its
+        images are read as ground truth, so the RMSE comes back against real photographs.
+
+        `settings` must be the SpecularFitSettings the fit was run with: the reconstruction shaders
+        are built from its basis settings and texture resolution.
+
+        Renders land in `output_directory/basis/`, ground truth in `output_directory/ground-truth/`.
+        Returns one Java Map of RMSE records per view, in view-set order.
+        """
+        return self._java.reconstructFromViewSet(
+            _jfile(reconstruction_vset_file), _jfile(output_directory), settings)
+
     def export_textures(self, material_directory):
         self._java.exportTextures(_jfile(material_directory))
 

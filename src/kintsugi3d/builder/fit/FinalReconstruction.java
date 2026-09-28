@@ -24,8 +24,13 @@ import kintsugi3d.gl.core.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import kintsugi3d.gl.vecmath.DoubleVector3;
+import org.lwjgl.BufferUtils;
+import java.awt.image.BufferedImage;
 import java.io.File;
+import javax.imageio.ImageIO;
 import java.io.IOException;
+import java.nio.FloatBuffer;
 import java.util.*;
 
 public class FinalReconstruction<ContextType extends Context<ContextType>>
@@ -34,10 +39,37 @@ public class FinalReconstruction<ContextType extends Context<ContextType>>
     private final ReadonlyGraphicsResources<ContextType> resources;
     private final ReconstructionSettings reconstructionSettings;
 
+    /**
+     * Whether saved reconstructions are written in the encoded space the RMSE is computed in,
+     * rather than as the raw linear framebuffer.
+     */
+    private boolean saveEncoded;
+
     public FinalReconstruction(ReadonlyGraphicsResources<ContextType> resources, TextureResolution textureResolution, ReconstructionSettings reconstructionSettings)
     {
         this.resources = resources;
         this.reconstructionSettings = reconstructionSettings;
+    }
+
+    /**
+     * Writes saved reconstructions in the same encoded space the RMSE is computed in, instead of
+     * as the raw linear framebuffer.
+     *
+     * The default save is a debug artefact and is close to useless as data: the framebuffer holds
+     * the BRDF response *before* it is multiplied by incident radiance and passed through the view
+     * set's luminance encoding, so on a real capture its values land around 0.003 and quantise to
+     * roughly one 8-bit level. Measured on DiLiGenT-MV, comparing such a save against the original
+     * photograph gives 21.7 dB where the RMSE reports the equivalent of 38.6 dB, and no single
+     * global gain reconciles them because incident radiance varies per pixel.
+     *
+     * With this enabled the saved image is {@code encode(linear * incidentRadiance)} - exactly the
+     * quantity the encoded RMSE compares against the ground truth - so the files can be scored
+     * directly against the source photographs.
+     */
+    public FinalReconstruction<ContextType> setSaveEncoded(boolean saveEncoded)
+    {
+        this.saveEncoded = saveEncoded;
+        return this;
     }
 
     public List<Map<String, ColorAppearanceRMSE>> reconstruct(TextureResources<ContextType> specularFit,
@@ -107,7 +139,15 @@ public class FinalReconstruction<ContextType extends Context<ContextType>>
 
                     if (debugDirectory != null)
                     {
-                        saveImageToFile(new File(debugDirectory, entry.getKey()), view.getIndex(), view.getReconstructionFramebuffer());
+                        if (saveEncoded)
+                        {
+                            saveEncodedImageToFile(new File(debugDirectory, entry.getKey()), view.getIndex(),
+                                view, reconstructionViewSet);
+                        }
+                        else
+                        {
+                            saveImageToFile(new File(debugDirectory, entry.getKey()), view.getIndex(), view.getReconstructionFramebuffer());
+                        }
                     }
 
                     // Record RMSE
@@ -125,6 +165,54 @@ public class FinalReconstruction<ContextType extends Context<ContextType>>
         {
             LOG.error("An error occurred during reconstruction:", e);
             return null;
+        }
+    }
+
+
+    private static int clampTo255(double v)
+    {
+        return (int) Math.round(Math.max(0.0, Math.min(255.0, v)));
+    }
+
+    /**
+     * Saves one reconstruction as {@code encode(linear * incidentRadiance)} - see setSaveEncoded().
+     */
+    private void saveEncodedImageToFile(File outputDirectory, int k, ReconstructionView<ContextType> view,
+                                        ReadonlyViewSet viewSet)
+    {
+        try
+        {
+            outputDirectory.mkdirs();
+            ReadableFramebuffer<ContextType> framebuffer = view.getReconstructionFramebuffer();
+            FramebufferSize size = framebuffer.getSize();
+            FloatBuffer buffer = BufferUtils.createFloatBuffer(size.width * size.height * 4);
+            framebuffer.getTextureReaderForColorAttachment(0).readFloatingPointRGBA(buffer);
+
+            BufferedImage image = new BufferedImage(size.width, size.height, BufferedImage.TYPE_INT_ARGB);
+            for (int p = 0; p < size.width * size.height; p++)
+            {
+                int argb = 0;
+                if (buffer.get(4 * p + 3) > 0.0f)
+                {
+                    DoubleVector3 linear = new DoubleVector3(
+                        buffer.get(4 * p), buffer.get(4 * p + 1), buffer.get(4 * p + 2))
+                        .applyOperator(z -> Double.isNaN(z) ? 0.0 : z);
+                    DoubleVector3 encoded =
+                        viewSet.getLuminanceEncoding().encode(linear.times(view.getIncidentRadiance(p)));
+                    argb = 0xFF000000
+                        | (clampTo255(encoded.x) << 16)
+                        | (clampTo255(encoded.y) << 8)
+                        | clampTo255(encoded.z);
+                }
+                // The framebuffer is bottom-up; BufferedImage rows run top-down.
+                image.setRGB(p % size.width, size.height - 1 - (p / size.width), argb);
+            }
+
+            ImageIO.write(image, "PNG", new File(outputDirectory, String.format("%04d.png", k)));
+        }
+        catch (IOException e)
+        {
+            LOG.error("An error occurred while saving encoded image:", e);
         }
     }
 
