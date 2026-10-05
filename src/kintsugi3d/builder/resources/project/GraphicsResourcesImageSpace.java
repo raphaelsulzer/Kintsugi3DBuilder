@@ -185,11 +185,51 @@ public final class GraphicsResourcesImageSpace<ContextType extends Context<Conte
         }
 
         // images are defined in the load options
+        public Builder<ContextType> loadLooseFiles(File cameraFile, ViewSetLoadOptions viewSetLoadOptions,
+            Float nearPlane, Float farPlane) throws Exception
+        {
+            return loadLooseFiles(getReaderForFile(cameraFile), cameraFile, viewSetLoadOptions, nearPlane, farPlane);
+        }
+
+        // images are defined in the load options
         public Builder<ContextType> loadLooseFiles(ViewSetReader reader, File cameraFile, ViewSetLoadOptions viewSetLoadOptions) throws Exception
         {
+            return loadLooseFiles(reader, cameraFile, viewSetLoadOptions, null, null);
+        }
+
+        /**
+         * Loads loose files, optionally overriding the automatically estimated clip planes.
+         *
+         * <p>ViewSet.Builder estimates the far plane as the corner-to-corner diagonal of the
+         * bounding box of the CAMERA POSITIONS (see findFarPlane), and the near plane as that
+         * divided by 32. The geometry is not consulted, and cannot be: it is loaded by
+         * loadAndValidateGeometry() below, after the view set has already been finished. That
+         * estimate is fine when the cameras are spread wide relative to their distance from the
+         * subject, which is the case for a camera ring of large radius. It fails for the opposite
+         * arrangement - cameras clustered on a dome, looking inward at an object some way off -
+         * where the camera spread understates the viewing distance and the far plane lands in
+         * front of the subject's back.
+         *
+         * <p>Measured on Skoltech3D's dragon: twenty cameras whose bounding-box diagonal is
+         * 695 mm, viewing an object whose geometry extends from 583 mm to 862 mm away. Roughly a
+         * fifth of the object's depth sat behind the far plane, and both the specular fit and
+         * every reconstruction from it silently used clipped geometry - renders came out about
+         * 80% of the correct size, displaced, and scored 8.5 dB against their own input views.
+         * Nothing in the logs indicated clipping.
+         *
+         * <p>Pass explicit planes when the caller knows the geometry, which it generally does.
+         * Both must be given together; either null keeps the automatic estimate.
+         */
+        public Builder<ContextType> loadLooseFiles(ViewSetReader reader, File cameraFile,
+            ViewSetLoadOptions viewSetLoadOptions, Float nearPlane, Float farPlane) throws Exception
+        {
             // Load view set
-            this.viewSet = reader.readFromFile(cameraFile, viewSetLoadOptions)
-                .finish();
+            ViewSet.Builder viewSetBuilder = reader.readFromFile(cameraFile, viewSetLoadOptions);
+            if (nearPlane != null && farPlane != null)
+            {
+                viewSetBuilder.setRecommendedClipPlanes(nearPlane, farPlane);
+            }
+            this.viewSet = viewSetBuilder.finish();
 
             updateViewSetFromImageLoadOptions();
             loadAndValidateGeometry();

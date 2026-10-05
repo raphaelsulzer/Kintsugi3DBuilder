@@ -74,9 +74,30 @@ class Kintsugi3DPipeline:
     def load_from_vset(self, vset_file, supporting_files_directory):
         self._java.loadFromVSETFile(_jfile(vset_file), _jfile(supporting_files_directory))
 
-    def load_from_loose_files(self, camera_file, load_options):
-        """load_options: a Java ViewSetLoadOptions object, e.g. from view_set_load_options()."""
-        self._java.loadFromLooseFiles(_jfile(camera_file), load_options)
+    def load_from_loose_files(self, camera_file, load_options,
+                              near_plane=None, far_plane=None):
+        """load_options: a Java ViewSetLoadOptions object, e.g. from view_set_load_options().
+
+        near_plane / far_plane override the automatically estimated clip planes, in the
+        same units as the camera poses. Pass both or neither.
+
+        The automatic estimate is the diagonal of the bounding box of the CAMERA POSITIONS,
+        and the geometry is never consulted - it is loaded after the view set is finished.
+        That is safe for a wide camera ring, and wrong for cameras clustered on a dome
+        looking at an object some distance off, where the camera spread understates the
+        viewing distance. On Skoltech3D's dragon the estimate put the far plane at 695 mm
+        against geometry reaching 862 mm, so a fifth of the object's depth was clipped out
+        of both the fit and every reconstruction, with nothing said in any log: renders came
+        back about 80% of the right size and scored 8.5 dB against their own input views.
+        If a render looks shrunken or displaced, suspect this before the poses.
+        """
+        if (near_plane is None) != (far_plane is None):
+            raise ValueError("pass both near_plane and far_plane, or neither")
+        if near_plane is None:
+            self._java.loadFromLooseFiles(_jfile(camera_file), load_options)
+        else:
+            self._java.loadFromLooseFiles(_jfile(camera_file), load_options,
+                                          jpype.JFloat(near_plane), jpype.JFloat(far_plane))
 
     def load_from_view_set(self, view_set):
         """view_set: a Java ViewSet object, e.g. from build_view_set()."""

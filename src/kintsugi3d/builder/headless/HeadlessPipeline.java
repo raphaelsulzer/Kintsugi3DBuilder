@@ -135,6 +135,21 @@ public final class HeadlessPipeline implements AutoCloseable
         load(newBuilder().loadLooseFiles(cameraFile, viewSetLoadOptions));
     }
 
+    /**
+     * Loads loose files with explicit near and far clip planes.
+     *
+     * <p>The automatic estimate is the diagonal of the bounding box of the camera positions,
+     * which silently clips a subject that sits further from the cameras than the cameras sit
+     * from each other - a dome of cameras looking inward at an object, rather than a wide ring.
+     * See GraphicsResourcesImageSpace.Builder.loadLooseFiles for the measured case. Pass both
+     * planes, in the same units as the camera poses; either null keeps the estimate.
+     */
+    public void loadFromLooseFiles(File cameraFile, ViewSetLoadOptions viewSetLoadOptions,
+        Float nearPlane, Float farPlane) throws Exception
+    {
+        load(newBuilder().loadLooseFiles(cameraFile, viewSetLoadOptions, nearPlane, farPlane));
+    }
+
     public void loadFromMetashapeModel(MetashapeModel model)
         throws IOException, MeshImportException, XMLStreamException, MissingImagesException, InitializationException
     {
