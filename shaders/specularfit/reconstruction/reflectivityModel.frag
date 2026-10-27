@@ -40,7 +40,7 @@ void main()
     // Constant term for pseudo-translucency
     vec3 constant = sRGBToLinear(getConstantTerm()) / PI;
 
-    LightingParameters l = calculateLightingParameters(reconstructionCameraPos, reconstructionLightPos);
+    LightingParameters l = calculateLightingParameters(reconstructionLightPos, reconstructionCameraPos);
     vec3 specular = distTimesPi(l.nDotH, vec3(roughness))
         * geom(roughness, l.nDotH, l.nDotV, l.nDotL, l.hDotV)
         * fresnel(specularColor.rgb, vec3(1), l.hDotV) / (4 * l.nDotV * PI);

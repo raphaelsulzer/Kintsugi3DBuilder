@@ -26,7 +26,7 @@ void main()
     float roughness = sqrtRoughness * sqrtRoughness;
     float geomRatio;
 
-    LightingParameters l = calculateLightingParameters(reconstructionCameraPos, reconstructionLightPos);
+    LightingParameters l = calculateLightingParameters(reconstructionLightPos, reconstructionCameraPos);
     if (l.nDotL > 0.0 && l.nDotV > 0.0)
     {
         float maskingShadowing = geom(roughness, l.nDotH, l.nDotV, l.nDotL, l.hDotV);
