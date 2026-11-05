@@ -198,4 +198,84 @@ vec4 getLinearColor(int virtualIndex)
     return linearizeColor(getColor(virtualIndex));
 }
 
+// ---------------------------------------------------------------------------
+// Multi-light-per-view support (triple-flash rig: one center + two side lights
+// captured in a single simultaneous exposure per view).
+//
+// Each view's lights are assumed to occupy LIGHTS_PER_VIEW consecutive slots in
+// the LightPositions/LightIntensities arrays, starting at getLightIndex(virtualIndex).
+// The functions below are explicit-index variants of the ones above, used to
+// address one specific light out of that group instead of the single light that
+// getLightInfo()/getLightVector()/getLightIntensity() assume.
+//
+// NOTE: these do NOT implement the FLATFIELD_CORRECTED branch that getLightInfo()
+// has -- flat-field tone calibration was defined and calibrated for a single
+// on-axis light and does not have a well-defined per-light meaning for an
+// off-axis side light, so multi-light fitting is only supported without flat-field
+// correction.
+// ---------------------------------------------------------------------------
+
+#ifndef LIGHTS_PER_VIEW
+#define LIGHTS_PER_VIEW 1
+#endif
+
+int getLightIndexForSlot(int virtualIndex, int slot)
+{
+    return getLightIndex(virtualIndex) + slot;
+}
+
+vec3 getLightVectorAtIndex(int virtualIndex, int lightIndex, vec3 position)
+{
+    int viewIndex = getViewIndex(virtualIndex);
+    return transpose(mat3(cameraPoses[viewIndex])) *
+        (lightPositions[lightIndex].xyz - cameraPoses[viewIndex][3].xyz) - position;
+}
+
+vec3 getLightIntensityAtIndex(int lightIndex)
+{
+    return lightIntensities[lightIndex].rgb;
+}
+
+LightInfo getLightInfoAtIndex(int virtualIndex, int lightIndex, vec3 position)
+{
+    LightInfo result;
+
+    vec3 unnormalizedDirection = getLightVectorAtIndex(virtualIndex, lightIndex, position);
+    float lightDistSquared = dot(unnormalizedDirection, unnormalizedDirection);
+    result.normalizedDirection = unnormalizedDirection * inversesqrt(lightDistSquared);
+
+    result.attenuatedIntensity = getLightIntensityAtIndex(lightIndex);
+#if !INFINITE_LIGHT_SOURCES
+    result.attenuatedIntensity /= lightDistSquared;
+#endif
+
+    return result;
+}
+
+// Convenience wrapper: address a light by its slot (0..LIGHTS_PER_VIEW-1) within
+// the current view's group of lights, rather than by its raw index into the
+// LightPositions/LightIntensities arrays.
+LightInfo getLightInfoForSlot(int virtualIndex, int slot, vec3 position)
+{
+    return getLightInfoAtIndex(virtualIndex, getLightIndexForSlot(virtualIndex, slot), position);
+}
+
+// Sum of all LIGHTS_PER_VIEW lights' attenuated intensity, treated as if they were
+// a single light from one direction. This is only a valid approximation for coarse
+// forward-comparison uses (e.g. average.frag's initial reflectance clustering, where
+// the divide-by-intensity is already just a rough proxy and not a true per-half-vector
+// reflectance recovery). It must NOT be used anywhere that needs each light's own
+// direction and half-vector individually (extractReflectance.frag and the
+// normal/diffuse/error shaders that derive "actual reflectance" from it) -- those
+// need getLightInfoForSlot() called once per slot and summed in radiance space instead.
+vec3 getCombinedLightIntensity(int virtualIndex, vec3 position)
+{
+    vec3 total = vec3(0.0);
+    for (int slot = 0; slot < LIGHTS_PER_VIEW; slot++)
+    {
+        total += getLightInfoForSlot(virtualIndex, slot, position).attenuatedIntensity;
+    }
+    return total;
+}
+
 #endif // COLOR_APPEARANCE_GLSL

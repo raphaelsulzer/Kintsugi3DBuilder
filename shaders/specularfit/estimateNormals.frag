@@ -103,77 +103,114 @@ void main()
     for (int k = 0; k < CAMERA_POSE_COUNT; k++)
     {
         vec4 imgColor = getLinearColor(k);
-        LightInfo lightInfo = getLightInfo(k);
-        vec3 light = objectToFitting * lightInfo.normalizedDirection;
         vec3 view = objectToFitting * normalize(getViewVector(k, position));
-        vec3 halfway = normalize(light + view);
-        float nDotH = max(0.0, halfway.z);
-        float nDotL = max(0.0, light.z);
         float nDotV = max(0.0, view.z);
         float triangleNDotV = max(0.0, dot(objectToFitting * triangleNormal, view));
+        float roughness = texture(tex_roughness, fTexCoord)[0];
 
-        if (imgColor.a > 0.0 && nDotH > COSINE_CUTOFF && nDotL > COSINE_CUTOFF && nDotV > COSINE_CUTOFF && triangleNDotV > COSINE_CUTOFF)
+        if (imgColor.a > 0.0 && nDotV > COSINE_CUTOFF && triangleNDotV > COSINE_CUTOFF)
         {
-            float hDotV = max(0.0, dot(halfway, view));
-
-            // "Light intensity" is defined in such a way that we need to multiply by pi to be properly normalized.
-            vec3 incidentRadiance = PI * lightInfo.attenuatedIntensity;
-
-            float roughness = texture(tex_roughness, fTexCoord)[0];
-            float maskingShadowing = geom(roughness, nDotH, nDotV, nDotL, hDotV);
-
-            vec3 actualReflectanceTimesNDotL = imgColor.rgb / incidentRadiance;
-            vec3 reflectanceEstimate = getBRDFEstimate(nDotH, maskingShadowing / (4 * nDotL * nDotV));
-
-            // n dot l is already incorporated by virtue of the fact that radiance is being optimized, not reflectance.
-            float weight = imgColor.a * triangleNDotV * sqrt(max(0, 1 - nDotH * nDotH));
-
 #if USE_LEVENBERG_MARQUARDT
-            mat3x2 mfdGradient = outerProduct(halfway.xy, getMFDGradient(nDotH)); // (d NdotH / dN) * (dD / d NdotH)
-            mat3x2 specularGradient;
-
-#if SMITH_MASKING_SHADOWING
-            vec3 mfdEstimate = getMFDEstimate(nDotH); // Also includes Fresnel
-            vec2 geomGradient = getHeightCorrelatedSmithGradient(roughness, light, view);
-            mat3x2 mfdGeomGradient = maskingShadowing * mfdGradient + outerProduct(geomGradient, mfdEstimate); // product rule
-            specularGradient = 0.25 * (nDotV * mfdGeomGradient - outerProduct(view.xy, mfdEstimate * maskingShadowing)) / (nDotV * nDotV); // quotient rule
-#else
-            if (nDotV * nDotH > 0.5 * hDotV && nDotL * nDotH > 0.5 * hDotV)
-            {
-                // G = 1.0
-                // f * nDotL = DF / (4 * nDotV)
-                specularGradient = 0.25 * (nDotV * mfdGradient - outerProduct(view.xy, getMFDEstimate(nDotH))) / (nDotV * nDotV); // quotient rule
-            }
-            else if (nDotV < nDotL)
-            {
-                // G = 2 * nDotH * nDotV / hDotV
-                // f * nDotL = DF * nDotH / (2 * hDotV)
-                specularGradient = 0.5 * (nDotH * mfdGradient + outerProduct(halfway.xy, getMFDEstimate(nDotH))) / hDotV; // product rule
-            }
-            else
-            {
-                // G = 2 * nDotH * nDotL / hDotV
-                // f * nDotL = DF * nDotH * nDotL / (2 * hDotV * nDotV)
-                vec3 mfdEstimate = getMFDEstimate(nDotH);
-                mat3x2 mfdNdotLGradient = nDotL * mfdGradient + outerProduct(light.xy, mfdEstimate);
-                mat3x2 mfdGeomGradient = 0.5 * (nDotH * mfdNdotLGradient + outerProduct(halfway.xy, nDotL * mfdEstimate)) / hDotV; // product rule
-                specularGradient = (nDotV * mfdGeomGradient - outerProduct(view.xy, mfdEstimate * maskingShadowing)) / (nDotV * nDotV); // quotient rule
-            }
+            // gradientSum accumulates d(estimatedRadianceSum)/dN across all LIGHTS_PER_VIEW lights (each
+            // light's per-channel reflectance*nDotL gradient scaled by that light's own incidentRadiance,
+            // since radiance contributions from separate simultaneous lights add). estimatedRadianceSum and
+            // the residual are compared directly against imgColor in radiance space instead of dividing
+            // imgColor by one light's irradiance (see estimateDiffuse.frag for the full derivation). This
+            // reduces exactly to the original single-light formula when LIGHTS_PER_VIEW == 1.
+            mat3x2 gradientSum = mat3x2(vec2(0), vec2(0), vec2(0));
+            vec3 estimatedRadianceSum = vec3(0.0);
+            vec3 totalIrradiance = vec3(0.0);
+            vec3 weightAccum = vec3(0.0);
+            bool anyValid = false;
 #endif
 
-            mat3x2 diffuseGradient = outerProduct(light.xy, getDiffuseEstimate() / PI);
+            for (int slot = 0; slot < LIGHTS_PER_VIEW; slot++)
+            {
+                LightInfo lightInfo = getLightInfoForSlot(k, slot, position);
+                vec3 light = objectToFitting * lightInfo.normalizedDirection;
+                vec3 halfway = normalize(light + view);
+                float nDotH = max(0.0, halfway.z);
+                float nDotL = max(0.0, light.z);
 
-            // fullGradient is essentially a portion of A-transpose
-            // The columns of fullGradient are R/G/B.
-            // The rows correspond to the components of N.
-            mat3x2 fullGradient = diffuseGradient + specularGradient;
+                if (nDotH <= COSINE_CUTOFF || nDotL <= COSINE_CUTOFF)
+                {
+                    continue;
+                }
 
-            mJTJ += weight * (fullGradient * transpose(fullGradient) + mat2(dampingFactor));
-            vJTb += weight * fullGradient * (actualReflectanceTimesNDotL - reflectanceEstimate * nDotL);
+                float hDotV = max(0.0, dot(halfway, view));
+
+                // "Light intensity" is defined in such a way that we need to multiply by pi to be properly normalized.
+                vec3 incidentRadiance = PI * lightInfo.attenuatedIntensity;
+
+                float maskingShadowing = geom(roughness, nDotH, nDotV, nDotL, hDotV);
+                vec3 reflectanceEstimate = getBRDFEstimate(nDotH, maskingShadowing / (4 * nDotL * nDotV));
+
+#if USE_LEVENBERG_MARQUARDT
+                mat3x2 mfdGradient = outerProduct(halfway.xy, getMFDGradient(nDotH)); // (d NdotH / dN) * (dD / d NdotH)
+                mat3x2 specularGradient;
+
+#if SMITH_MASKING_SHADOWING
+                vec3 mfdEstimate = getMFDEstimate(nDotH); // Also includes Fresnel
+                vec2 geomGradient = getHeightCorrelatedSmithGradient(roughness, light, view);
+                mat3x2 mfdGeomGradient = maskingShadowing * mfdGradient + outerProduct(geomGradient, mfdEstimate); // product rule
+                specularGradient = 0.25 * (nDotV * mfdGeomGradient - outerProduct(view.xy, mfdEstimate * maskingShadowing)) / (nDotV * nDotV); // quotient rule
 #else
+                if (nDotV * nDotH > 0.5 * hDotV && nDotL * nDotH > 0.5 * hDotV)
+                {
+                    // G = 1.0
+                    // f * nDotL = DF / (4 * nDotV)
+                    specularGradient = 0.25 * (nDotV * mfdGradient - outerProduct(view.xy, getMFDEstimate(nDotH))) / (nDotV * nDotV); // quotient rule
+                }
+                else if (nDotV < nDotL)
+                {
+                    // G = 2 * nDotH * nDotV / hDotV
+                    // f * nDotL = DF * nDotH / (2 * hDotV)
+                    specularGradient = 0.5 * (nDotH * mfdGradient + outerProduct(halfway.xy, getMFDEstimate(nDotH))) / hDotV; // product rule
+                }
+                else
+                {
+                    // G = 2 * nDotH * nDotL / hDotV
+                    // f * nDotL = DF * nDotH * nDotL / (2 * hDotV * nDotV)
+                    vec3 mfdEstimate = getMFDEstimate(nDotH);
+                    mat3x2 mfdNdotLGradient = nDotL * mfdGradient + outerProduct(light.xy, mfdEstimate);
+                    mat3x2 mfdGeomGradient = 0.5 * (nDotH * mfdNdotLGradient + outerProduct(halfway.xy, nDotL * mfdEstimate)) / hDotV; // product rule
+                    specularGradient = (nDotV * mfdGeomGradient - outerProduct(view.xy, mfdEstimate * maskingShadowing)) / (nDotV * nDotV); // quotient rule
+                }
+#endif
 
-            mATA += weight * dot(reflectanceEstimate, reflectanceEstimate) * outerProduct(light, light);
-            vATb += weight * dot(reflectanceEstimate, actualReflectanceTimesNDotL) * light;
+                mat3x2 diffuseGradient = outerProduct(light.xy, getDiffuseEstimate() / PI);
+
+                // fullGradient is essentially a portion of A-transpose, in reflectance*nDotL space, for this light.
+                // The columns of fullGradient are R/G/B. The rows correspond to the components of N.
+                mat3x2 fullGradient = diffuseGradient + specularGradient;
+
+                // Scale each color channel's gradient column by this light's own incidentRadiance to convert
+                // from reflectance*nDotL gradient to this light's contribution to the radiance gradient.
+                mat3x2 lightGradient = mat3x2(fullGradient[0] * incidentRadiance.r,
+                                               fullGradient[1] * incidentRadiance.g,
+                                               fullGradient[2] * incidentRadiance.b);
+
+                gradientSum += lightGradient;
+                estimatedRadianceSum += reflectanceEstimate * nDotL * incidentRadiance;
+                totalIrradiance += incidentRadiance;
+                weightAccum += incidentRadiance * sqrt(max(0.0, 1.0 - nDotH * nDotH));
+                anyValid = true;
+#else
+                mATA += imgColor.a * triangleNDotV * dot(reflectanceEstimate, reflectanceEstimate) * outerProduct(light, light);
+                vATb += imgColor.a * triangleNDotV * dot(reflectanceEstimate, imgColor.rgb / incidentRadiance) * light;
+#endif
+            }
+
+#if USE_LEVENBERG_MARQUARDT
+            if (anyValid)
+            {
+                float totalIrradianceLum = max(1e-8, getLuminance(totalIrradiance));
+                // n dot l is already incorporated by virtue of the fact that radiance is being optimized, not reflectance.
+                float weight = imgColor.a * triangleNDotV * (getLuminance(weightAccum) / totalIrradianceLum);
+
+                mJTJ += weight * (gradientSum * transpose(gradientSum) + mat2(dampingFactor));
+                vJTb += weight * gradientSum * (imgColor.rgb - estimatedRadianceSum);
+            }
 #endif
         }
     }

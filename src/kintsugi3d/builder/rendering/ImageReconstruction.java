@@ -109,10 +109,21 @@ public class ImageReconstruction<ContextType extends Context<ContextType>> imple
                 viewSet.getRecommendedNearPlane(), viewSet.getRecommendedFarPlane()));
         drawable.program().setUniform("reconstructionCameraPos",
             viewSet.getCameraPoseInverse(viewIndex).getColumn(3).getXYZ());
-        drawable.program().setUniform("reconstructionLightPos",
-            viewSet.getCameraPoseInverse(viewIndex).times(viewSet.getLightPosition(viewSet.getLightIndex(viewIndex)).asPosition()).getXYZ());
-        drawable.program().setUniform("reconstructionLightIntensity",
-            viewSet.getLightIntensity(viewSet.getLightIndex(viewIndex)));
+
+        // Set reconstructionLightPos[i]/reconstructionLightIntensity[i] for each of this view's
+        // LIGHTS_PER_VIEW lights (consecutive indices starting at this view's own base light index,
+        // matching colorappearance.glsl's getLightIndexForSlot()) -- reduces exactly to the original
+        // single-light uniform assignment when lightsPerView == 1.
+        int lightsPerView = viewSet.getProjectSettings().getInt("lightsPerView");
+        int baseLightIndex = viewSet.getLightIndex(viewIndex);
+        for (int slot = 0; slot < lightsPerView; slot++)
+        {
+            int lightIndex = baseLightIndex + slot;
+            drawable.program().setUniform("reconstructionLightPos[" + slot + "]",
+                viewSet.getCameraPoseInverse(viewIndex).times(viewSet.getLightPosition(lightIndex).asPosition()).getXYZ());
+            drawable.program().setUniform("reconstructionLightIntensity[" + slot + "]",
+                viewSet.getLightIntensity(lightIndex));
+        }
 
         for (int i = 0; i < framebuffer.getColorAttachmentCount(); i++)
         {

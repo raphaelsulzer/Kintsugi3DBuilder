@@ -48,34 +48,57 @@ void main()
 
         if (imgColor.a > 0.0 && triangleNDotV > 0.0)
         {
-            LightInfo lightInfo = getLightInfo(k);
-            vec3 light = lightInfo.normalizedDirection;
-            vec3 halfway = normalize(light + view);
-            float nDotH = max(0.0, dot(fittedNormal, halfway));
-            float nDotL = max(0.0, dot(fittedNormal, light));
             float nDotV = max(0.0, dot(fittedNormal, view));
 
-            // "Light intensity" is defined in such a way that we need to multiply by pi to be properly normalized.
-            vec3 incidentRadiance = PI * lightInfo.attenuatedIntensity;
+            // See estimateDiffuse.frag for the full derivation of why, under simultaneous multi-light
+            // illumination, we solve for diffuseAlbedo from the summed forward radiance model instead of
+            // dividing imgColor by one light's irradiance. This reduces exactly to the original single-light
+            // formula when LIGHTS_PER_VIEW == 1.
+            vec3 specularRadianceSum = vec3(0.0);
+            vec3 diffuseSensitivity = vec3(0.0);
+            vec3 totalIrradiance = vec3(0.0);
+            vec3 specularAvoidanceAccum = vec3(0.0);
 
-            vec3 actualReflectanceTimesNDotL = imgColor.rgb / incidentRadiance;
-
-            if (nDotH > 0.0 && nDotL > 0.0 && nDotV > 0.0)
+            for (int slot = 0; slot < LIGHTS_PER_VIEW; slot++)
             {
-                float hDotV = max(0.0, dot(halfway, view));
-                float maskingShadowing = geom(roughness, nDotH, nDotV, nDotL, hDotV);
-                vec3 specularEstimate = getMFDEstimate(nDotH) * maskingShadowing / (4 * nDotV);
+                LightInfo lightInfo = getLightInfoForSlot(k, slot, position);
+                vec3 light = lightInfo.normalizedDirection;
+                vec3 halfway = normalize(light + view);
+                float nDotH = max(0.0, dot(fittedNormal, halfway));
+                float nDotL = max(0.0, dot(fittedNormal, light));
 
-                // Avoid overfitting to specular dominated samples
-                float weight = sqrt(max(0, 1 - nDotH * nDotH));
+                // "Light intensity" is defined in such a way that we need to multiply by pi to be properly normalized.
+                vec3 incidentRadiance = PI * lightInfo.attenuatedIntensity;
+                totalIrradiance += incidentRadiance;
 
-                vec3 diffuse = PI * (actualReflectanceTimesNDotL - specularEstimate); // could be negative
+                if (nDotH > 0.0 && nDotL > 0.0 && nDotV > 0.0)
+                {
+                    float hDotV = max(0.0, dot(halfway, view));
+                    float maskingShadowing = geom(roughness, nDotH, nDotV, nDotL, hDotV);
+                    vec3 specularEstimate = getMFDEstimate(nDotH) * maskingShadowing / (4 * nDotV);
+
+                    specularRadianceSum += specularEstimate * incidentRadiance;
+                    diffuseSensitivity += nDotL * incidentRadiance;
+                    specularAvoidanceAccum += incidentRadiance * sqrt(max(0.0, 1.0 - nDotH * nDotH));
+                }
+            }
+
+            float totalIrradianceLum = getLuminance(totalIrradiance);
+            if (totalIrradianceLum > 0.0 && getLuminance(diffuseSensitivity) > 0.0)
+            {
+                vec3 safeSensitivity = max(vec3(1e-8), diffuseSensitivity);
+                vec3 diffuseAlbedoEstimate = PI * (imgColor.rgb - specularRadianceSum) / safeSensitivity; // could be negative
+                float safeIrradianceLum = max(1e-8, totalIrradianceLum);
+                float nDotLAgg = getLuminance(diffuseSensitivity) / safeIrradianceLum;
+                float weight = getLuminance(specularAvoidanceAccum) / safeIrradianceLum;
+
+                vec3 diffuse = diffuseAlbedoEstimate * nDotLAgg;
 
                 sumWeights += weight * triangleNDotV;
-                weightedSums +=  weight * triangleNDotV *  vec4(diffuse, nDotL);
-                cosineWeightedSums += weight *  triangleNDotV * vec4(diffuse * nDotL, nDotL * nDotL);
+                weightedSums +=  weight * triangleNDotV *  vec4(diffuse, nDotLAgg);
+                cosineWeightedSums += weight *  triangleNDotV * vec4(diffuse * nDotLAgg, nDotLAgg * nDotLAgg);
 
-//                vec3 w = vec3(1, nDotL, nDotL * nDotL);
+//                vec3 w = vec3(1, nDotLAgg, nDotLAgg * nDotLAgg);
 //                mATA += weight * triangleNDotV * outerProduct(w, w);
 //                vATb += weight * triangleNDotV * outerProduct(w, diffuse);
             }

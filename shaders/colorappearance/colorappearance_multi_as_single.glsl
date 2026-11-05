@@ -58,4 +58,9 @@ LightInfo getLightInfo()
     return getLightInfo(viewIndex);
 }
 
+LightInfo getLightInfoForSlot(int slot, vec3 position)
+{
+    return getLightInfoForSlot(viewIndex, slot, position);
+}
+
 #endif // COLOR_APPEARANCE_MULTI_AS_SINGLE_GLSL

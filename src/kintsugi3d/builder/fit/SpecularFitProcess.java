@@ -21,6 +21,7 @@ import kintsugi3d.builder.resources.project.*;
 import kintsugi3d.builder.resources.project.specular.TextureResources;
 import kintsugi3d.builder.resources.project.stream.GraphicsStreamResource;
 import kintsugi3d.gl.builders.ProgramBuilder;
+import kintsugi3d.gl.builders.framebuffer.FramebufferObjectBuilder;
 import kintsugi3d.gl.core.*;
 import kintsugi3d.gl.material.ReadonlyImportedMaterial;
 import kintsugi3d.gl.material.ReadonlyMaterialTextureMap;
@@ -150,6 +151,25 @@ public class SpecularFitProcess
                 reconstructionCallback.accept(view, rmse);
             }
         }
+    }
+
+    /**
+     * Convenience wrapper around {@link #reconstructAll} for callers (e.g. Python via JPype) where
+     * implementing a {@link BiConsumer} functional interface is inconvenient: renders every view's fitted
+     * material back into image space under its own actual captured lighting and compares against the real
+     * photo, returning one row per view as {@code [viewIndex, sampleCount, encodedGroundTruthRMSE,
+     * normalizedSRGB_RMSE, normalizedLinearRMSE]}. All three RMSE values are in [0, 1]-normalized units
+     * (see {@link ColorAppearanceRMSE}'s own docs on what each represents); a standard PSNR can be computed
+     * from any of them as {@code 20 * log10(1.0 / rmse)}.
+     */
+    public <ContextType extends Context<ContextType>> double[][] reconstructAllToArray(GraphicsResources<ContextType> resources)
+        throws IOException
+    {
+        java.util.List<double[]> rows = new java.util.ArrayList<>();
+        reconstructAll(resources, (view, rmse) -> rows.add(new double[] {
+            view.getIndex(), rmse.getSampleCount(), rmse.getEncodedGroundTruth(), rmse.getNormalizedSRGB(), rmse.getNormalizedLinear()
+        }));
+        return rows.toArray(new double[0][]);
     }
 
     public <ContextType extends Context<ContextType>> SpecularFitOptimizable<ContextType> optimizeFit(
@@ -566,14 +586,22 @@ public class SpecularFitProcess
     {
         SpecularFitProgramFactory<ContextType> programFactory = getProgramFactory();
 
+        // One shared observed-radiance/visibility attachment, plus one halfway/geomRatio/weight/validity
+        // attachment PER LIGHT, plus one incidentRadiance attachment PER LIGHT (extractReflectance.frag's
+        // halfway_geom_weight[LIGHTS_PER_VIEW] and incidentRadiance[LIGHTS_PER_VIEW] array outputs each
+        // consume LIGHTS_PER_VIEW consecutive color attachments/locations).
+        int lightsPerView = resources.getViewSet().getProjectSettings().getInt("lightsPerView");
+        FramebufferObjectBuilder<ContextType> reflectanceFramebufferBuilder =
+            resources.getContext().buildFramebufferObject(resolution.width, resolution.height)
+                .addColorAttachment(ColorFormat.RGBA32F)
+                .addColorAttachments(ColorFormat.RGBA32F, 2 * lightsPerView);
+
         try
         (
             // Reflectance stream: includes a shader program and a framebuffer object for extracting reflectance data from images.
             GraphicsStreamResource<ContextType> stream = resources.streamFactory().streamAsResource(
                 getReflectanceProgramBuilder(resources, programFactory),
-                resources.getContext().buildFramebufferObject(resolution.width, resolution.height)
-                    .addColorAttachment(ColorFormat.RGBA32F)
-                    .addColorAttachment(ColorFormat.RGBA32F))
+                reflectanceFramebufferBuilder)
         )
         {
             optimizationMethod.optimize(stream, monitor);
