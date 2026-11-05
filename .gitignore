@@ -97,3 +97,5 @@ bin/
 /test-output/
 /cache/
 /data/
+
+.claude/worktrees/
