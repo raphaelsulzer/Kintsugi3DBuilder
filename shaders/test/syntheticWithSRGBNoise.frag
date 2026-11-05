@@ -40,7 +40,7 @@ float rand(vec2 n)
 
 void main()
 {
-    LightingParameters l = calculateLightingParameters(reconstructionCameraPos, reconstructionLightPos, normalize(fNormal));
+    LightingParameters l = calculateLightingParameters(reconstructionLightPos, reconstructionCameraPos, normalize(fNormal));
     vec3 specular = distTimesPi(l.nDotH, vec3(roughness))
         * geom(roughness, l.nDotH, l.nDotV, l.nDotL, l.hDotV)
         * fresnel(specularColor.rgb, vec3(1), l.hDotV) / (4 * l.nDotV * PI);

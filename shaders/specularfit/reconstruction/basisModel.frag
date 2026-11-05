@@ -42,12 +42,8 @@ void main()
 
     for (int slot = 0; slot < LIGHTS_PER_VIEW; slot++)
     {
-        // NOTE: argument order matches the original single-light call site exactly (camera position is
-        // passed as calculateLightingParameters' first ["lightPos"] argument, light position as its second
-        // ["cameraPos"] argument) -- preserved as-is rather than "fixed", since this is pre-existing
-        // behavior unrelated to multi-light support and changing it would risk altering the single-light
-        // case too.
-        LightingParameters l = calculateLightingParameters(reconstructionCameraPos, reconstructionLightPos[slot]);
+        // calculateLightingParameters takes (lightPos, cameraPos).
+        LightingParameters l = calculateLightingParameters(reconstructionLightPos[slot], reconstructionCameraPos);
 
         vec3 lightDisplacement = reconstructionLightPos[slot] - getPosition();
         // "Light intensity" is defined in such a way that we need to multiply by pi to be properly normalized.

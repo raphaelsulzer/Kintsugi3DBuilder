@@ -87,7 +87,9 @@ public final class DepthMapGenerator<ContextType extends Context<ContextType>> i
         framebuffer.clearDepthBuffer();
 
         Matrix4 modelView = Matrix4.lookAt(
-            viewSet.getCameraPoseInverse(viewIndex).times(viewSet.getLightPosition(0).asPosition()).getXYZ(),
+            // the view's own light: with one light per capture pass index 0 was always right, but a
+            // view set with several lights per pose (OLAT) would shadow-test against the wrong source
+            viewSet.getCameraPoseInverse(viewIndex).times(viewSet.getLightPosition(viewSet.getLightIndex(viewIndex)).asPosition()).getXYZ(),
             geometryResources.geometry.getCentroid(),
             new Vector3(0, 1, 0));
         depthRenderingProgram.setUniform("model_view", modelView);
